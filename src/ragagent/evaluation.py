@@ -247,7 +247,13 @@ def write_report(result: Dict[str, Any], path: str | Path, extra: Optional[Dict[
 
 
 def _match(hit: SearchHit, gold: str) -> bool:
-    """gold 形如 `doc_id::章节关键字`；章节关键字为空时只比 doc_id。"""
+    """gold 形如 `doc_id::章节关键字`；章节关键字为空时只比 doc_id。
+
+    只认 `section_path`，**不看正文**。宽松口径（章节名 or 正文含关键字）会把
+    「见退货运费表格」这类只是引用别处的段落也算命中，机制上会虚高；
+    本集实测两种口径数值相同（0.963 / 0.778），因为 gold 都写成了真实章节名，
+    但保留严格口径是为了避免以后新增题目时再踩这个坑。
+    """
     if "::" in gold:
         doc_id, keyword = gold.split("::", 1)
     else:
@@ -256,7 +262,7 @@ def _match(hit: SearchHit, gold: str) -> bool:
         return False
     if not keyword:
         return True
-    return keyword in hit.chunk.section_path or keyword in hit.chunk.text
+    return keyword in hit.chunk.section_path
 
 
 __all__ = ["load_dataset", "evaluate", "sweep_thresholds", "write_report"]
