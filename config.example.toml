@@ -1,0 +1,63 @@
+# 客服知识库配置（复制为 config.toml 使用）
+
+[storage]
+path = "data/rag.db"
+
+[chunking]
+max_chars = 520
+overlap_chars = 80
+parent_max_chars = 1600
+min_chars = 40
+
+[embedding]
+# hash   = 离线确定性向量（无需外部服务，跑通/测试用）
+# remote = OpenAI 兼容 /embeddings（下面是阿里云百炼 DashScope 兼容模式）
+provider = "remote"
+url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+model = "text-embedding-v3"
+api_key_env = "DASHSCOPE_API_KEY"
+dim = 256            # 仅 hash provider 使用；remote 维度由服务端返回决定
+batch_size = 10      # 单次请求文本条数（DashScope 上限 10；本地 bge 可调大）
+timeout = 30.0
+# 本地 Ollama 示例：
+# url = "http://127.0.0.1:11434/v1/embeddings"
+# model = "bge-m3"
+
+[llm]
+# OpenAI 兼容对话接口（下面是 DeepSeek；换成 DashScope 就是 qwen-plus 等）
+url = "https://api.deepseek.com/v1/chat/completions"
+model = "deepseek-chat"        # 不要用 deepseek-reasoner：不支持 function calling
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.1
+max_tokens = 600
+timeout = 60.0
+# 本地 Ollama 示例：
+# url = "http://127.0.0.1:11434/v1/chat/completions"
+# model = "qwen2.5:7b"
+
+[retrieval]
+top_k = 5
+candidate_k = 20
+rrf_k = 60
+fusion = "rrf"           # rrf | weighted
+bm25_weight = 0.5
+vector_weight = 0.5
+enable_vector = true
+vector_min_score = 0.0    # 向量相似度下限，哈希向量噪声大时可调到 0.15
+bm25_rank_weight = 1.0
+vector_rank_weight = 1.0
+phrase_rank_weight = 1.0
+enable_rerank = true
+rerank_mode = "heuristic" # heuristic | llm | noop
+rerank_top_k = 20
+refuse_threshold = 0.0    # 用 `ragagent eval` 的阈值扫描校准
+max_unseen_ratio = 0.8    # 实词未见比例阈值，越小越容易拒答（1.0 表示只拒答全未见）
+
+[agent]
+max_steps = 4
+top_k = 5
+require_citation = true
+
+[evaluation]
+dataset = "data/eval/queries.jsonl"
+k_values = [3, 5]

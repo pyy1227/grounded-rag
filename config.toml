@@ -1,0 +1,53 @@
+[storage]
+path = "data/rag.db"
+
+[chunking]
+max_chars = 520
+overlap_chars = 80
+parent_max_chars = 1600
+min_chars = 40
+
+[embedding]
+# hash = 离线确定性向量（不需要任何服务）；remote = OpenAI 兼容 /embeddings
+provider = "remote"
+url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
+model = "text-embedding-v3"
+api_key_env = "DASHSCOPE_API_KEY"
+dim = 256            # 仅 hash provider 使用；remote 的维度以服务端返回为准
+batch_size = 10      # DashScope text-embedding-v3 单次上限 10 条，超了会 400
+timeout = 30.0
+
+[llm]
+# OpenAI 兼容对话接口；key 只从环境变量读，不落配置文件
+url = "https://api.deepseek.com/v1/chat/completions"
+model = "deepseek-chat"
+api_key_env = "DEEPSEEK_API_KEY"
+temperature = 0.1
+max_tokens = 600
+timeout = 60.0
+
+[retrieval]
+top_k = 5
+candidate_k = 20
+rrf_k = 60
+fusion = "rrf"
+bm25_weight = 0.5
+vector_weight = 0.5
+enable_vector = true
+vector_min_score = 0.0
+bm25_rank_weight = 1.0
+vector_rank_weight = 1.0
+phrase_rank_weight = 1.0
+enable_rerank = true
+rerank_mode = "heuristic"
+rerank_top_k = 20
+refuse_threshold = 0.0
+max_unseen_ratio = 0.8
+
+[agent]
+max_steps = 4
+top_k = 5
+
+[evaluation]
+dataset = "data/eval/queries.jsonl"
+k_values = [3, 5]

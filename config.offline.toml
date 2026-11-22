@@ -1,0 +1,53 @@
+# 离线配置：不需要任何 API Key，开箱即跑。
+# 用法：ragagent --config config.offline.toml ingest data/docs
+#      ragagent --config config.offline.toml ask "退货运费谁承担"
+#
+# 与 config.toml 的唯一区别：embedding 用哈希向量、llm 不配 key（走规则替身）。
+# 适合：clone 下来先看效果、跑单测、没有模型额度时。
+
+[storage]
+# 用独立的库文件，避免和 config.toml 的真实向量混在一起
+path = "data/rag-offline.db"
+
+[chunking]
+max_chars = 520
+overlap_chars = 80
+parent_max_chars = 1600
+min_chars = 40
+
+[embedding]
+provider = "hash"
+dim = 256
+
+[llm]
+url = "http://127.0.0.1:8081/v1/chat/completions"
+model = "qwen2.5-7b-instruct"
+temperature = 0.1
+max_tokens = 600
+timeout = 30.0
+
+[retrieval]
+top_k = 5
+candidate_k = 20
+rrf_k = 60
+fusion = "rrf"
+bm25_weight = 0.5
+vector_weight = 0.5
+enable_vector = true
+vector_min_score = 0.0
+bm25_rank_weight = 1.0
+vector_rank_weight = 1.0
+phrase_rank_weight = 1.0
+enable_rerank = true
+rerank_mode = "heuristic"
+rerank_top_k = 20
+refuse_threshold = 0.0
+max_unseen_ratio = 0.8
+
+[agent]
+max_steps = 4
+top_k = 5
+
+[evaluation]
+dataset = "data/eval/queries.jsonl"
+k_values = [3, 5]
