@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            python-version: "3.11"
+          - os: ubuntu-latest
+            python-version: "3.12"
+          # dev.ps1 是 PowerShell 脚本，Windows 上要保证同样能跑
+          - os: windows-latest
+            python-version: "3.11"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      # 离线配置不碰网络、不需要任何 Key：既能当 smoke test，也防「改了代码但 demo 跑不起来」
+      - name: Offline smoke test
+        run: |
+          uv run ragagent --config config.offline.toml ingest data/docs
+          uv run ragagent --config config.offline.toml ask "退货运费谁承担"
+          uv run ragagent --config config.offline.toml eval --no-sweep --report reports/eval-offline.md
