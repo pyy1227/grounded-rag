@@ -47,7 +47,9 @@
 ## 复现
 
 ```bash
-# 1. 生成外部评测集（需要 pyarrow：pip install pyarrow）
+# 1. 生成外部评测集
+#    注意：pyarrow 17+ 要求 numpy>=2，本项目锁了 numpy<2，所以要装 16.x
+pip install "pyarrow<17"
 python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000
 
 # 2. 入库（两条路各自一个库）

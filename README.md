@@ -150,6 +150,23 @@ gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 o
 
 完整报告见 [docs/eval-report-example.md](docs/eval-report-example.md)，包含阈值扫描的取舍表和根因分析。
 
+报告包含：
+
+- `recall@3` / `recall@5`：gold 是否进入前 k（**不经过拒答**，纯检索）
+- `recall@3_effective` / `recall@5_effective`：叠加拒答后的有效召回，两者之差即拒答的代价
+- `MRR`：首个命中排名的倒数均值
+- `refusal_accuracy`：不可回答问题的正确拒答率
+- `over_refusal`：可回答问题被误拒的比例
+- **阈值扫描**：`max_unseen_ratio` 从 1.0 到 0.5 的取舍表（用 `recall@5_effective` 看业务侧损失）
+- **未命中样例**：前 10 条没进 top-k 的 query 及其 gold，方便人工核对标注
+
+评测集格式（`data/eval/queries.jsonl`）：
+
+```json
+{"query":"是他们发错颜色了，寄回去的快递钱还要我掏吗","gold":["售后政策::退货运费"],"answerable":true}
+{"query":"支持以旧换新吗","gold":[],"answerable":false}
+```
+
 ## 外部数据集验证（题不是自己出的）
 
 上面那套集是自己出题、自己标 gold、还在同一份上选阈值，只能内部对比。所以另外接了一份公开数据：
@@ -169,7 +186,8 @@ query / positive / hard-negative 三元组，抽 200 条查询、组织成 3,000
 复现：
 
 ```bash
-python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000   # 需要 pyarrow
+pip install "pyarrow<17"   # pyarrow 17+ 要 numpy>=2，与本项目的 numpy<2 冲突
+python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000
 ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
          ingest-jsonl data/external/T2Reranking/passages.jsonl
 ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
@@ -182,23 +200,6 @@ ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
 > 判断向量到底有没有生效看 `ragagent stats` 的 `vector_active` / `vectors`——**不要只看 `embedder` 名字**，
 > 配置写了 `enable_vector = true` 不等于库里真有向量（缺向量会打 WARNING 并降级为 BM25+短语）。
 > 想换分词器：`pip install -e ".[zh]"` 后设 `RAGAGENT_TOKENIZER=jieba`（换分词器后同样需重新 ingest）。
-
-报告包含：
-
-- `recall@3` / `recall@5`：gold 是否进入前 k（**不经过拒答**，纯检索）
-- `recall@3_effective` / `recall@5_effective`：叠加拒答后的有效召回，两者之差即拒答的代价
-- `MRR`：首个命中排名的倒数均值
-- `refusal_accuracy`：不可回答问题的正确拒答率
-- `over_refusal`：可回答问题被误拒的比例
-- **阈值扫描**：`max_unseen_ratio` 从 1.0 到 0.5 的取舍表（用 `recall@5_effective` 看业务侧损失）
-- **未命中样例**：前 10 条没进 top-k 的 query 及其 gold，方便人工核对标注
-
-评测集格式（`data/eval/queries.jsonl`）：
-
-```json
-{"query":"是他们发错颜色了，寄回去的快递钱还要我掏吗","gold":["售后政策::退货运费"],"answerable":true}
-{"query":"支持以旧换新吗","gold":[],"answerable":false}
-```
 
 ## 目录结构
 

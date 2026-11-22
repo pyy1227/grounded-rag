@@ -12,7 +12,8 @@
 用法：
     python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000
 
-依赖 pyarrow：pip install pyarrow
+依赖 pyarrow：pip install "pyarrow<17"
+（pyarrow 17+ 要求 numpy>=2，而本项目锁了 numpy<2，装 17 以上会要求升级 numpy）
 parquet 会从 hf-mirror 自动下载并缓存到 data/external/cache/（已存在则复用）。
 """
 from __future__ import annotations
@@ -29,7 +30,7 @@ import httpx
 try:
     import pyarrow.parquet as pq
 except ImportError:  # pragma: no cover
-    raise SystemExit("需要 pyarrow：pip install pyarrow")
+    raise SystemExit('需要 pyarrow：pip install "pyarrow<17"')
 
 CACHE = Path("data/external/cache")
 MIRROR = "https://hf-mirror.com"
