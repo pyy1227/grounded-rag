@@ -24,13 +24,16 @@ class StubRetriever:
     def __init__(self) -> None:
         self.config = AppConfig()
         self.last_unseen_ratio = 0.0
+        self.last_refused = False
+        self.last_refusal_reason = None
         self._hits = {
             "q1": [_hit("售后政策", "退货运费")],
             "q2": [_hit("其他文档", "无关章节"), _hit("售后政策", "退款时效")],
             "q3": [],
         }
 
-    def search(self, query, top_k=None, use_rerank=None):
+    def search(self, query, top_k=None, use_rerank=None, apply_refusal=True, **kwargs):
+        self.last_refused = not self._hits.get(query, [])
         return self._hits.get(query, [])
 
 

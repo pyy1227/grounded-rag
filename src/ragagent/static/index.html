@@ -1123,6 +1123,7 @@
     const grid = el("div", "metric-grid");
     grid.appendChild(metricCard("recall@3", metrics["recall@3"], metrics["recall@3"] >= 0.8));
     grid.appendChild(metricCard("recall@5", metrics["recall@5"], metrics["recall@5"] >= 0.8));
+    grid.appendChild(metricCard("有效 recall@5", metrics["recall@5_effective"], metrics["recall@5_effective"] >= 0.8));
     grid.appendChild(metricCard("MRR", metrics.mrr, metrics.mrr >= 0.7));
     grid.appendChild(metricCard("拒答准确率", metrics.refusal_accuracy, metrics.refusal_accuracy >= 0.8));
     grid.appendChild(metricCard("误拒率", metrics.over_refusal, metrics.over_refusal <= 0.1));
@@ -1131,6 +1132,7 @@
 
     const meta = el("p", "hint",
       `数据集 ${metrics.dataset || "—"} · 可回答 ${metrics.answerable} 条 / 不可回答 ${metrics.unanswerable} 条` +
+      " · recall@k 只算检索，有效 recall@k 叠加拒答（两者之差是拒答的代价）" +
       (data.report_path ? ` · 报告 ${data.report_path}` : "")
     );
     container.appendChild(meta);
@@ -1147,7 +1149,7 @@
       const table = el("table");
       const thead = el("thead");
       const headRow = el("tr");
-      ["max_unseen_ratio", "recall@5", "误拒率", "拒答准确率"].forEach((label, index) => {
+      ["max_unseen_ratio", "有效 recall@5", "误拒率", "拒答准确率"].forEach((label, index) => {
         headRow.appendChild(el("th", index === 0 ? "" : "num", label));
       });
       thead.appendChild(headRow);

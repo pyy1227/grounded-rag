@@ -44,6 +44,9 @@ class Retriever:
         # 向量那一路是否真的可用（配置写了 enable_vector 不等于库里有向量）
         self.vector_active: bool = False
         self.vector_count: int = 0
+        # 最近一次检索的拒答判定（apply_refusal=False 时也会算，只是不生效）
+        self.last_refused: bool = False
+        self.last_refusal_reason: Optional[str] = None
 
     # ==================== 索引 ====================
     def _current_signature(self) -> tuple:
@@ -97,7 +100,14 @@ class Retriever:
         candidate_k: Optional[int] = None,
         use_vector: Optional[bool] = None,
         use_rerank: Optional[bool] = None,
+        apply_refusal: bool = True,
     ) -> List[SearchHit]:
+        """检索。
+
+        `apply_refusal=False` 时只算拒答判定、不据此清空结果——评测要用它把
+        「检索有没有命中」和「该不该拒答」两个能力分开度量，否则 recall@k 里
+        混着拒答策略的影响，看不出检索本身变好还是变差。
+        """
         query = str(query or "").strip()
         if not query:
             return []
@@ -160,6 +170,9 @@ class Retriever:
             )
 
         if not fused:
+            self.last_refused = True
+            self.last_refusal_reason = "no_candidates"
+            self.last_unseen_ratio = self.unseen_ratio(query)
             return []
 
         bm25_score = {hit.chunk.chunk_id: hit.score for hit in bm25_hits}
@@ -198,21 +211,31 @@ class Retriever:
             for hit in hits:
                 hit.score = hit.fused_score
 
+        reason = self._refusal_decision(query, hits)
+        self.last_refused = reason is not None
+        self.last_refusal_reason = reason
+        if reason and apply_refusal:
+            self.last_sources["refused_by"] = reason
+            return []
+        return hits
+
+    def _refusal_decision(self, query: str, hits: List[SearchHit]) -> Optional[str]:
+        """判断该不该拒答，返回拒答原因（不该拒答返回 None）。
+
+        与是否真的清空结果解耦：评测需要「判定结果」和「检索结果」两个视角。
+        """
         threshold = float(self.config.retrieval.refuse_threshold or 0.0)
         if threshold > 0 and (not hits or hits[0].score < threshold):
-            return []
+            return "score_threshold"
 
-        # 第二道拒答：问题里的实词在知识库中完全没见过时，不硬答
         unseen_ratio = self.unseen_ratio(query)
         self.last_unseen_ratio = unseen_ratio
         max_unseen = float(self.config.retrieval.max_unseen_ratio)
         if max_unseen < 1.0 and unseen_ratio >= max_unseen:
-            self.last_sources["refused_by"] = "unseen_ratio"
-            return []
+            return "unseen_ratio"
         if max_unseen >= 1.0 and unseen_ratio >= 1.0:
-            self.last_sources["refused_by"] = "all_terms_unseen"
-            return []
-        return hits
+            return "all_terms_unseen"
+        return None
 
     def unseen_ratio(self, query: str) -> float:
         """问题里长度≥2 的 token 中，知识库从未出现过的比例。"""

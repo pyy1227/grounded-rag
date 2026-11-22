@@ -1,11 +1,15 @@
-"""离线评测：检索质量可度量。
+"""离线评测：检索质量与拒答质量分开度量。
 
 指标定义：
-- recall@k：answerable 样本中，前 k 条里至少命中一条 gold 的比例
-- MRR：第一条 gold 命中排名的倒数均值（没命中记 0）
+- recall@k：answerable 样本中，检索结果前 k 条里至少命中一条 gold 的比例（不经过拒答过滤）
+- recall@k(effective)：在 recall@k 基础上再叠加拒答——被拒答的样本算未命中
+- MRR：第一条 gold 命中排名的倒数均值（不经过拒答过滤）
 - refusal_accuracy：不可回答样本被正确拒答的比例
 - over_refusal：可回答样本被误拒的比例（越低越好）
-- 阈值扫描：refuse_threshold 从 0 到 0.6，观察 recall 与拒答准确率的取舍
+- 阈值扫描：max_unseen_ratio 从小到大的取舍，用 recall@k(effective) 看业务侧真实损失
+
+为什么要拆：如果 recall@k 直接在「拒答之后」的结果上算，检索变差和拒答变激进会混成
+同一个数字，既看不出是哪一层的问题，也没法比较两路召回的差异。
 """
 from __future__ import annotations
 
@@ -64,7 +68,11 @@ def evaluate(
     unseen_ratios: List[float] = []
     try:
         for case in cases:
-            hits: List[SearchHit] = retriever.search(case.query, top_k=max_k, use_rerank=True)
+            # 关掉拒答过滤，先把「检索命中了没有」单独拿到手
+            hits: List[SearchHit] = retriever.search(
+                case.query, top_k=max_k, use_rerank=True, apply_refusal=False
+            )
+            refused = bool(getattr(retriever, "last_refused", False)) or not hits
             unseen_ratios.append(retriever.last_unseen_ratio)
             ranks = []
             keys = []
@@ -80,7 +88,7 @@ def evaluate(
                     case=case,
                     hit_keys=keys,
                     ranks=ranks,
-                    refused=len(hits) == 0,
+                    refused=refused,
                 )
             )
     finally:
@@ -108,6 +116,11 @@ def evaluate(
     for k in k_values:
         hit_count = sum(1 for r in answerable if r.ranks and min(r.ranks) <= k)
         metrics[f"recall@{k}"] = round(hit_count / max(1, len(answerable)), 4)
+        # 叠加拒答后的有效召回：业务上用户真正「能拿到答案」的比例
+        effective = sum(
+            1 for r in answerable if not r.refused and r.ranks and min(r.ranks) <= k
+        )
+        metrics[f"recall@{k}_effective"] = round(effective / max(1, len(answerable)), 4)
 
     metrics["mrr"] = round(
         sum(1.0 / min(r.ranks) for r in answerable if r.ranks) / max(1, len(answerable)),
@@ -153,7 +166,8 @@ def sweep_thresholds(
 ) -> List[Dict[str, Any]]:
     """拒答阈值扫描：max_unseen_ratio 越小越激进（更多拒答）。
 
-    输出 recall@5 / 误拒率 / 拒答准确率三者的取舍表，用于按业务风险选点。
+    输出 recall@5(effective) / 误拒率 / 拒答准确率三者的取舍表，用于按业务风险选点。
+    recall 用 effective 版本——用户视角的损失里，被误拒和检索没命中一样算没拿到答案。
     """
     rows: List[Dict[str, Any]] = []
     for threshold in thresholds:
@@ -162,7 +176,8 @@ def sweep_thresholds(
         rows.append(
             {
                 "threshold": threshold,
-                "recall@5": metrics.get("recall@5"),
+                "recall@5": metrics.get("recall@5_effective"),
+                "recall@5_retrieval_only": metrics.get("recall@5"),
                 "over_refusal": metrics.get("over_refusal"),
                 "refusal_accuracy": metrics.get("refusal_accuracy"),
             }
@@ -181,10 +196,14 @@ def write_report(result: Dict[str, Any], path: str | Path, extra: Optional[Dict[
         "",
         "## 核心指标",
         "",
+        "`recall@k` 只衡量检索命中（不经过拒答）；`recall@k_effective` 叠加拒答，"
+        "两者之差就是拒答策略的代价。",
+        "",
         "| 指标 | 数值 |",
         "| --- | ---: |",
     ]
-    for key in ("recall@3", "recall@5", "mrr", "over_refusal", "refusal_accuracy",
+    for key in ("recall@3", "recall@3_effective", "recall@5", "recall@5_effective",
+                "mrr", "over_refusal", "refusal_accuracy",
                 "mean_unseen_ratio_answerable", "mean_unseen_ratio_unanswerable"):
         if key in metrics:
             value = metrics[key]
