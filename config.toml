@@ -49,5 +49,6 @@ max_steps = 4
 top_k = 5
 
 [evaluation]
-dataset = "data/eval/queries.jsonl"
+# dev 用于调阈值；test 是留出集，只在最终报告里跑一次
+dataset = "data/eval/queries-dev.jsonl"
 k_values = [3, 5]

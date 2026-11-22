@@ -6,10 +6,11 @@ from typing import Dict, List, Optional
 
 from ..config import AppConfig
 from ..embedding import Embedder, build_embedder
-from ..llm import ChatModel
+from ..llm import ChatModel, build_chat
 from ..models import Chunk, SearchHit
 from ..storage import Storage
-from ..tokenization import normalize, tokenize
+from ..tokenization import content_tokens, normalize, tokenize
+from ..verify import build_verifier
 from .bm25 import BM25Index
 from .fusion import rrf_fuse, weighted_fuse
 from .rerank import Reranker, build_reranker
@@ -33,6 +34,13 @@ class Retriever:
         self.config = config
         self.embedder = embedder or build_embedder(config)
         self.reranker = reranker or build_reranker(config, chat)
+
+        # 语义拒答校验：有 Key 才启用，离线自动退回词面信号
+        self.verifier = None
+        if config.retrieval.verify_mode == "llm" and config.llm_api_key():
+            self.verifier = build_verifier(
+                chat or build_chat(config), snippets=config.retrieval.verify_snippets
+            )
 
         self._signature: Optional[tuple] = None
         self._chunks: List[Chunk] = []
@@ -230,6 +238,12 @@ class Retriever:
 
         unseen_ratio = self.unseen_ratio(query)
         self.last_unseen_ratio = unseen_ratio
+
+        # 语义校验优先：词面信号已实测分不开可答/不可答，能上模型就别用数词。
+        if self.verifier is not None:
+            answerable, _reason = self.verifier.verify(query, hits)
+            return None if answerable else "verifier"
+
         max_unseen = float(self.config.retrieval.max_unseen_ratio)
         if max_unseen < 1.0 and unseen_ratio >= max_unseen:
             return "unseen_ratio"
@@ -238,14 +252,28 @@ class Retriever:
         return None
 
     def unseen_ratio(self, query: str) -> float:
-        """问题里长度≥2 的 token 中，知识库从未出现过的比例。"""
+        """问题里的**实词**有多大比例在知识库里完全没出现过。
+
+        两处降噪（相比早期版本直接对 `tokenize` 结果计数）：
+        1. 只统计实词——语气助词与虚词（吗/了/能/我…）与可答性无关，之前它们
+           把口语化问法的比例机械推到 0.8 以上，导致大量误拒；
+        2. bigram 降权（`unseen_bigram_weight`，默认 0.5）——二字词多数由字符滑窗
+           切出，噪声大于信息，等权计数会放大误判。
+        """
         if self._bm25 is None:
             return 0.0
-        tokens = {token for token in tokenize(query) if len(token) >= 2}
+        tokens = set(content_tokens(query))
         if not tokens:
             return 0.0
-        unseen = sum(1 for token in tokens if self._bm25.df(token) == 0)
-        return unseen / len(tokens)
+        bigram_weight = float(self.config.retrieval.unseen_bigram_weight)
+        total = 0.0
+        unseen = 0.0
+        for token in tokens:
+            weight = bigram_weight if len(token) >= 2 else 1.0
+            total += weight
+            if self._bm25.df(token) == 0:
+                unseen += weight
+        return unseen / total if total else 0.0
 
     # ==================== 短语召回（第三路） ====================
     def _phrase_search(self, query: str, top_k: int) -> List[tuple[str, float]]:

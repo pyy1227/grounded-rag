@@ -70,8 +70,14 @@ class RetrievalConfig:
     rerank_top_k: int = 20
     # 融合分低于该值直接拒答（阈值需按评测集校准）
     refuse_threshold: float = 0.0
-    # 问题里「知识库完全没出现过的实词」占比超过该值时拒答；1.0 表示只有全部未见过才拒答
+    # 问题里「知识库没出现过的实词」占比超过该值时拒答；1.0 表示只有全部未见过才拒答
     max_unseen_ratio: float = 1.0
+    # 拒答信号里二字词的权重。bigram 多为字符滑窗切出的噪声，默认降权到 0.5
+    unseen_bigram_weight: float = 0.5
+    # 拒答方式：llm = 用模型判断「仅凭检索到的段落能否回答」（有 Key 时生效）；
+    # off = 只用词面信号（离线模式）。词面信号已实测分不开可答/不可答，见 docs/eval-report-example.md
+    verify_mode: str = "llm"  # llm | off
+    verify_snippets: int = 3
 
 
 @dataclass

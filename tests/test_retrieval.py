@@ -15,10 +15,52 @@ def test_search_hits_expected_document(temp_env):
 
 def test_unseen_terms_trigger_refusal(temp_env):
     config, storage = temp_env
+    config.retrieval.max_unseen_ratio = 0.8
     retriever = Retriever(storage, config)
-    config.retrieval.max_unseen_ratio = 1.0
     assert retriever.search("量子计算机怎么维修") == []
-    assert retriever.last_sources.get("refused_by") in {"all_terms_unseen", "unseen_ratio"}
+    assert retriever.last_sources.get("refused_by") == "unseen_ratio"
+
+
+def test_content_tokens_drop_particles_and_cross_word_bigrams():
+    """拒答信号只看实词：语气助词要滤掉，bigram 不能跨虚词生成。"""
+    from ragagent.tokenization import content_tokens
+
+    tokens = content_tokens("能带进机舱吗")
+    assert "吗" not in tokens and "能" not in tokens
+    assert "机舱" in tokens
+
+    # 「拆都没拆」直接滑窗会切出 拆都/都没；滤掉虚词后只保留相邻的 没拆
+    tokens = content_tokens("拆都没拆")
+    assert "没拆" in tokens
+    assert "拆都" not in tokens
+
+
+def test_verifier_decides_refusal_when_available(temp_env):
+    """有语义校验时以模型判定为准：说不能答就拒，说能答就不拒。"""
+    from ragagent.llm import LLMResult
+    from ragagent.verify import build_verifier
+
+    config, storage = temp_env
+    config.retrieval.max_unseen_ratio = 0.0  # 词面信号一律拒，用来验证模型优先
+    retriever = Retriever(storage, config)
+
+    class FakeChat:
+        name = "fake"
+        answerable = True
+
+        def chat(self, messages, tools=None, tool_choice="auto", temperature=None, max_tokens=None):
+            payload = str(self.answerable).lower()
+            return LLMResult(content='{"answerable": %s, "reason": "test"}' % payload)
+
+    chat = FakeChat()
+    retriever.verifier = build_verifier(chat)
+
+    assert retriever.search("退货运费谁承担"), "模型说能答时不应拒答"
+
+    chat.answerable = False
+    retriever.verifier.cache.clear()
+    assert retriever.search("退货运费谁承担") == []
+    assert retriever.last_refusal_reason == "verifier"
 
 
 def test_incremental_ingest_skips_unchanged(temp_env, temp_docs):

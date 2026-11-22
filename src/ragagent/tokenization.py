@@ -56,8 +56,43 @@ def normalize(text: str) -> str:
     return text.strip()
 
 
+# 虚词与语气助词：这些词在不在知识库里，跟"能不能回答"无关。
+# 拒答判定只看实词，否则口语化的问法会被大量虚词稀释。
+_STOP_CHARS = frozenset(
+    "的了着过吗呢吧啊呀嘛哦哇么什怎们我你他她它这那哪谁"
+    "是有在能会要就都还也才又很太把被给让从到对和与或但而及等之其所以为于个些点"
+)
+
+
+def content_tokens(text: str) -> List[str]:
+    """拒答判定专用的 token：去掉虚词后，只取单字与**相邻实词**组成的二字词。
+
+    和 `tokenize` 的区别有两处，都是为了降低噪声：
+    1. 先滤掉语气助词/虚词（吗、了、能、我……），它们与可答性无关；
+    2. bigram 只在原本相邻的实词之间生成——`tokenize` 那种直接按字符滑窗会在
+       「拆都没拆」里切出 `拆没`、`没拆` 这种跨虚词组合，几乎必然未命中。
+    """
+    normalized = normalize(text)
+    if not normalized:
+        return []
+
+    tokens: List[str] = []
+    for run in _CJK_RUN_RE.findall(normalized):
+        previous = ""
+        for char in run:
+            if char in _STOP_CHARS:
+                previous = ""
+                continue
+            tokens.append(char)
+            if previous:
+                tokens.append(previous + char)
+            previous = char
+    tokens.extend(_ASCII_WORD_RE.findall(normalized))
+    return tokens
+
+
 def mode() -> str:
     return "jieba" if _USE_JIEBA else "bigram"
 
 
-__all__ = ["tokenize", "normalize", "mode"]
+__all__ = ["tokenize", "normalize", "mode", "content_tokens"]
