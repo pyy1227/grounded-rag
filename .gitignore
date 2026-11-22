@@ -6,6 +6,12 @@ pytest-cache-files-*/
 # 本机沙箱调试产物：无头浏览器配置、文件权限修复备份
 .tmp-edge*/
 .acl-recovery/
+# 外部评测数据的下载缓存与派生文件（体积大、可从脚本重建）
+data/external/
+# 一次性诊断脚本
+.tools/
+.tmp-ext/
+.tmp-pip/
 .jbeval/
 # jieba.cache / .cache/ 由本行与模板里的 .cache 规则覆盖
 *.cache

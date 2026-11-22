@@ -133,9 +133,12 @@ ragagent eval --dataset data/eval/queries.jsonl --report reports/eval.md
 | --- | ---: | ---: |
 | recall@3 | 0.7778 | **0.9630** |
 | recall@5 | 0.8148 | **0.9630** |
-| MRR | 0.6327 | **0.8642** |
+| MRR | 0.6142 | **0.8457** |
 
 哈希向量本质是字符 bigram 的袋，口语改写一上就掉；语义向量能靠 paraphrase 命中，差 15~23 个百分点。
+
+gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 or 正文含关键字」，会让「见退货运费表格」
+这类只是引用别处的段落也算命中，机制上注定虚高。
 
 **拒答层**：两套向量完全一样（误拒率 0.4815、拒答准确率 0.6）——拒答信号来自 BM25 词表，与向量无关。
 而且这个信号在本集上**同时错了两头**：可回答问题的平均未见词比例 0.6643、不可回答问题 0.7774，
@@ -147,7 +150,33 @@ ragagent eval --dataset data/eval/queries.jsonl --report reports/eval.md
 
 完整报告见 [docs/eval-report-example.md](docs/eval-report-example.md)，包含阈值扫描的取舍表和根因分析。
 
-> 注意：这是 32 条样本的对比实验，能看出**检索层**的配置差异，但样本量不足以外推线上精度；
+## 外部数据集验证（题不是自己出的）
+
+上面那套集是自己出题、自己标 gold、还在同一份上选阈值，只能内部对比。所以另外接了一份公开数据：
+[`C-MTEB/T2Reranking`](https://huggingface.co/datasets/C-MTEB/T2Reranking) 的 6,129 条中文
+query / positive / hard-negative 三元组，抽 200 条查询、组织成 3,000 条语料（正例 + 难负例），转成检索任务。
+
+| 指标 | 哈希向量 | text-embedding-v3 | 差异 |
+| --- | ---: | ---: | ---: |
+| recall@3 | 0.6450 | **0.8450** | +20.0pp |
+| recall@5 | 0.7050 | **0.9000** | +19.5pp |
+| MRR | 0.5657 | **0.7205** | +0.155 |
+
+方向与内部集一致（+20pp vs +18.5pp），说明内部结论不是自己出题刷出来的。
+局限写在 [docs/external-eval.md](docs/external-eval.md)：小语料抽样让绝对值偏乐观、只测检索不测拒答、
+200 条查询下 1 条题就是 0.5pp。
+
+复现：
+
+```bash
+python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000   # 需要 pyarrow
+ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
+         ingest-jsonl data/external/T2Reranking/passages.jsonl
+ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
+         eval --dataset data/external/T2Reranking/queries.jsonl --no-sweep --report reports/ext-hash.md
+```
+
+> 注意：32 条内部集能看出**检索层**的配置差异，但样本量不足以外推线上精度；
 > 拒答层的数字只能说明「该信号在口语化输入上不成立」，不要引用成拒答能力。
 > 换 embedding 模型后必须 `ragagent ingest data/docs --force` 重建索引，否则新旧向量不在同一空间。
 > 判断向量到底有没有生效看 `ragagent stats` 的 `vector_active` / `vectors`——**不要只看 `embedder` 名字**，
@@ -194,8 +223,10 @@ rag-agent/
 │   ├── cli.py            # 命令行
 │   └── static/index.html # 网页（单文件原生 JS，无构建）
 ├── data/docs/            # demo 文档
-├── data/eval/            # 评测集
-├── docs/eval-report-example.md  # 评测报告示例
+├── data/eval/            # 内部评测集
+├── docs/eval-report-example.md  # 内部评测报告示例
+├── docs/external-eval.md        # 外部数据集验证（C-MTEB）
+├── scripts/prepare_cmteb.py     # 外部评测集预处理
 └── tests/                # pytest
 ```
 
@@ -221,17 +252,20 @@ pytest -q
 ```
 
 覆盖：切分（FAQ/表格/长文）、BM25 排序、RRF 融合、评测指标、Agent 多步循环（FakeChat 注入）、
-静态页挂载（能打开且不挡 API 路由）、向量状态可见性（缺向量时告警而不是静默降级）。
+静态页挂载（能打开且不挡 API 路由）、向量状态可见性（缺向量时告警而不是静默降级）、
+外部语料批量入库（一条记录 = 一个 chunk）、**gold 只认章节名**的口径回归。
 
 ## 实现规模
 
-- 33 个 Python 文件、约 3,170 行代码（其中测试 8 个文件约 380 行 / 28 个用例），外加一个约 1,120 行的静态页
+- 34 个 Python 文件、约 3,530 行（其中测试 8 个文件约 400 行 / 30 个用例，脚本 1 个约 160 行），
+  外加一个约 1,120 行的静态页
 - 纯 Python 后端 + 一个 HTML 文件；无 Node 构建链、无外部数据库服务：SQLite 单文件即可跑
 
 ## 已知限制
 
 - `config.offline.toml` 的哈希向量没有语义能力，只用于零依赖跑通；`config.toml` 已接真实 embedding（text-embedding-v3）；
 - **拒答信号在口语化输入上失效**（误拒率 0.48、拒答准确率 0.6，且换更好的向量无改善）——已知缺陷，需换信号，不是调阈值能修；
-- 评测集 32 条：足以区分**检索层**的配置差异（recall@3 0.778 vs 0.963），但不足以外推线上精度；
+- 内部评测集 32 条：足以区分**检索层**的配置差异（recall@3 0.778 vs 0.963），但不足以外推线上精度；
+- 外部验证用的是 3,000 条小语料抽样（`C-MTEB/T2Reranking`），recall 绝对值比百万级语料乐观，且只覆盖检索层；
 - SQLite 单机，多租户/高并发需换 PostgreSQL + pgvector；
 - 未做鉴权、限流、重试与结构化日志，属演示级服务，别当生产网关用。
