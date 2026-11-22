@@ -156,6 +156,59 @@ class Storage:
             )
         return len(chunks)
 
+    def replace_bulk(
+        self,
+        chunks: Iterable[Chunk],
+        model: str,
+        vectors: Dict[str, np.ndarray],
+        documents: Iterable[DocumentRecord],
+    ) -> int:
+        """批量整篇替换：外部评测集入库用，一个连接内完成，避免几千次开关库。
+
+        与 replace_chunks 语义一致（先按 doc_id 删旧再写新），只是去掉了逐篇开销。
+        """
+        chunks = list(chunks)
+        documents = list(documents)
+        doc_ids = [doc.doc_id for doc in documents]
+        with self.conn() as conn:
+            for doc_id in doc_ids:
+                conn.execute(
+                    "DELETE FROM embeddings WHERE chunk_id IN "
+                    "(SELECT chunk_id FROM chunks WHERE doc_id = ?)",
+                    (doc_id,),
+                )
+                conn.execute("DELETE FROM chunks WHERE doc_id = ?", (doc_id,))
+            conn.executemany(
+                """
+                INSERT INTO chunks(chunk_id, doc_id, ordinal, section_path, kind, text, is_parent, parent_id, meta_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [chunk.to_row() for chunk in chunks],
+            )
+            payload = []
+            for chunk in chunks:
+                vector = vectors.get(chunk.chunk_id)
+                if vector is None:
+                    continue
+                array = np.asarray(vector, dtype=np.float32)
+                payload.append((chunk.chunk_id, model, int(array.shape[0]), array.tobytes()))
+            conn.executemany(
+                "INSERT OR REPLACE INTO embeddings(chunk_id, model, dim, vector) VALUES (?, ?, ?, ?)",
+                payload,
+            )
+            conn.executemany(
+                """
+                INSERT OR REPLACE INTO documents(doc_id, title, path, sha256, size, mtime, ingested_at, version, chunk_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (doc.doc_id, doc.title, doc.path, doc.sha256, doc.size, doc.mtime,
+                     doc.ingested_at, doc.version, doc.chunk_count)
+                    for doc in documents
+                ],
+            )
+        return len(chunks)
+
     def iter_chunks(self, include_parents: bool = False) -> List[Chunk]:
         sql = "SELECT * FROM chunks"
         if not include_parents:

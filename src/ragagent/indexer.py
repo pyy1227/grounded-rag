@@ -19,10 +19,14 @@ import numpy as np
 from .chunking import chunk_document, chunk_stats
 from .config import AppConfig
 from .embedding import Embedder, build_embedder
-from .models import DocumentRecord
+from .models import Chunk, DocumentRecord
 from .parsing import SUPPORTED_SUFFIXES, parse_document
 from .storage import Storage
 from .tokenization import mode as tokenizer_mode
+
+# 单条 embedding 输入的字符上限（text-embedding-v3 单条 token 上限约 8192，
+# 中文按 1 字≈1 token 估，留足余量）。正常 chunk 只有几百字，不会触发。
+_EMBED_MAX_CHARS = 2000
 
 
 @dataclass
@@ -156,6 +160,63 @@ class Indexer:
             vectors.extend(np.asarray(matrix, dtype=np.float32))
         return vectors
 
+    def ingest_records(self, records: Iterable[dict]) -> dict:
+        """「一条记录 = 一个 chunk」的批量入库，供外部公开评测集使用。
+
+        外部数据集本身就是「query ↔ passage」，passage 不需要再解析或切分，
+        所以走这条旁路：直接建 chunk、算向量、一次事务写库。
+        记录格式：{"doc_id": "...", "title": "...", "text": "..."}
+        """
+        started = time.perf_counter()
+        report = IngestReport()
+        prepared: List[tuple[str, str, str]] = []
+        for record in records:
+            doc_id = str(record.get("doc_id") or "").strip()
+            text = str(record.get("text") or "").strip()
+            if not doc_id or not text:
+                report.errors.append({"path": doc_id or "<empty>", "error": "缺少 doc_id 或 text"})
+                continue
+            prepared.append((doc_id, str(record.get("title") or "passage"), text))
+
+        if not prepared:
+            raise ValueError("没有可入库的记录")
+
+        now = datetime.now(timezone.utc).isoformat()
+        # 安全阀：外部语料可能夹着超长 passage（实测最长 6.8 万字），
+        # 直接送 embedding 会被服务端 400 整批打回。截断后再算向量，正文仍完整入库。
+        matrix = self._embed([text[:_EMBED_MAX_CHARS] for _, _, text in prepared])
+        chunks: List[Chunk] = []
+        documents: List[DocumentRecord] = []
+        vectors = {}
+        for (doc_id, title, text), vector in zip(prepared, matrix):
+            chunk = Chunk(
+                chunk_id=doc_id, doc_id=doc_id, ordinal=0,
+                section_path=title, kind="passage", text=text,
+            )
+            chunks.append(chunk)
+            vectors[chunk.chunk_id] = vector
+            documents.append(
+                DocumentRecord(
+                    doc_id=doc_id, title=title, path=f"external:{doc_id}",
+                    sha256=_sha256_text(text), size=len(text.encode("utf-8")),
+                    mtime=0.0, ingested_at=now, version=1, chunk_count=1,
+                )
+            )
+
+        self.storage.replace_bulk(chunks, self.embedder.model, vectors, documents)
+        self.storage.set_meta("last_ingest_at", now)
+
+        report.added = [doc.doc_id for doc in documents]
+        report.chunks = len(chunks)
+        report.elapsed_ms = int((time.perf_counter() - started) * 1000)
+        report.stats = {
+            "documents": len(documents),
+            "children": len(chunks),
+            "embedder": self.embedder.model,
+            "tokenizer": tokenizer_mode(),
+        }
+        return report.to_dict()
+
 
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -163,6 +224,10 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: fh.read(65536), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 __all__ = ["Indexer", "IngestReport"]

@@ -26,10 +26,19 @@ def _build(config: AppConfig):
     return storage
 
 
+def _load_config(args: argparse.Namespace) -> AppConfig:
+    """加载配置，支持 `--db` 覆盖库路径（同一份配置对比不同索引时用）。"""
+    config = AppConfig.load(args.config)
+    db = getattr(args, "db", None)
+    if db:
+        config.storage.path = db
+    return config
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     from .indexer import Indexer
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     storage = _build(config)
     indexer = Indexer(storage, config)
     report = indexer.ingest_path(args.path, force=args.force)
@@ -40,7 +49,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 def cmd_search(args: argparse.Namespace) -> int:
     from .retrieval.retriever import Retriever
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     storage = _build(config)
     hits = Retriever(storage, config).search(args.query, top_k=args.top_k)
     _print({"query": args.query, "hits": [hit.to_dict() for hit in hits]})
@@ -50,7 +59,7 @@ def cmd_search(args: argparse.Namespace) -> int:
 def cmd_ask(args: argparse.Namespace) -> int:
     from .generation import AnswerGenerator
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     storage = _build(config)
     answer = AnswerGenerator(storage, config).answer(args.query, top_k=args.top_k)
     _print(answer.to_dict())
@@ -60,7 +69,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
 def cmd_agent(args: argparse.Namespace) -> int:
     from .agent.loop import AgentRunner
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     storage = _build(config)
     answer = AgentRunner(storage, config).run(args.query)
     _print(answer.to_dict())
@@ -71,7 +80,7 @@ def cmd_eval(args: argparse.Namespace) -> int:
     from .evaluation import evaluate, load_dataset, sweep_thresholds, write_report
     from .retrieval.retriever import Retriever
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     if args.threshold is not None:
         config.retrieval.refuse_threshold = args.threshold
     storage = _build(config)
@@ -111,7 +120,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
     from .retrieval.retriever import Retriever
     from .tokenization import mode as tokenizer_mode
 
-    config = AppConfig.load(args.config)
+    config = _load_config(args)
     storage = _build(config)
     model = Retriever(storage, config).embedder.model
     vectors = storage.count_embeddings(model)
@@ -134,6 +143,27 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_jsonl(args: argparse.Namespace) -> int:
+    """外部评测集专用：一条记录 = 一个 chunk，跳过解析与切分。"""
+    from .indexer import Indexer
+
+    config = _load_config(args)
+    path = Path(args.path)
+    if not path.exists():
+        print(f"文件不存在: {path}", file=sys.stderr)
+        return 1
+    records = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                records.append(json.loads(line))
+    storage = _build(config)
+    report = Indexer(storage, config).ingest_records(records)
+    _print(report)
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import uvicorn
 
@@ -148,6 +178,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ragagent", description="可评测的 RAG 知识助手")
     parser.add_argument("--config", default="config.toml", help="配置文件路径")
+    parser.add_argument("--db", default=None, help="覆盖 storage.path（对比不同索引时用）")
     sub = parser.add_subparsers(dest="command", required=True)
 
     ingest = sub.add_parser("ingest", help="导入文档")
@@ -178,6 +209,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = sub.add_parser("stats", help="索引统计")
     stats.set_defaults(func=cmd_stats)
+
+    ingest_jsonl = sub.add_parser(
+        "ingest-jsonl",
+        help="把「一条记录=一个 chunk」的 JSONL 入库（外部评测集用）",
+    )
+    ingest_jsonl.add_argument("path")
+    ingest_jsonl.set_defaults(func=cmd_ingest_jsonl)
 
     serve = sub.add_parser("serve", help="启动 HTTP 服务")
     serve.add_argument("--host", default="127.0.0.1")
