@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 <#
 .SYNOPSIS
     rag-agent 一键演示脚本：按顺序跑完「索引 → 入库 → 检索 → 回答 → 拒答 → Agent → 评测」。
@@ -106,12 +106,12 @@ if (-not $SkipEval) {
     Write-Host ""
     Write-Host ("  报告已写入：{0}" -f $ReportPath) -ForegroundColor Green
     if (-not $FullEval) {
-        Write-Host "  想要阈值扫描表（recall vs 误拒 vs 拒答准确率）：再加 -FullEval" -ForegroundColor DarkGray
+        Write-Host "  想要阈值扫描表（recall vs 误拒 vs 拒答准确率）：离线模式再加 -FullEval（在线语义校验模式会自动跳过）" -ForegroundColor DarkGray
     }
 }
 
 Write-Host ""
 Write-Host ("=" * 70) -ForegroundColor DarkGray
 Write-Host "  演示结束。HTTP 版：" -ForegroundColor Green
-Write-Host "    ragagent serve --port 8000   然后打开 http://127.0.0.1:8000/docs" -ForegroundColor Green
+Write-Host "    ragagent serve --port 8000   然后打开 http://127.0.0.1:8000/（网页版，/docs 是 OpenAPI）" -ForegroundColor Green
 Write-Host ("=" * 70) -ForegroundColor DarkGray

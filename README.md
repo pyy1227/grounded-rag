@@ -102,6 +102,20 @@ http://127.0.0.1:8000/?s=退货运费谁承担
 前端只有一个 `src/ragagent/static/index.html`（原生 JS + fetch，无 npm、无打包），
 由 FastAPI 挂在根路径；后端接口仍是纯 JSON，CLI 用法完全不变。
 
+## HTTP 安全边界
+
+`serve` 默认只绑 `127.0.0.1`。服务端不会因为一个路径参数就读写整个磁盘：
+
+| 变量 | 默认值 | 作用 |
+| --- | --- | --- |
+| `RAGAGENT_INGEST_ROOT` | `data/docs` | `/ingest` 只接受该目录内的路径（CLI 不受限） |
+| `RAGAGENT_EVAL_ROOT` | `data/eval` | `/eval` 的 dataset 必须在该目录内 |
+| `RAGAGENT_REPORT_ROOT` | `reports` | `/eval` 的 report 必须写在该目录内 |
+| `RAGAGENT_API_TOKEN` | 空（不鉴权） | 设置后 `/ingest`、`/eval` 需要 `X-API-Token` 或 `Authorization: Bearer` |
+
+越界路径返回 400，入库有失败文件返回 422，token 不匹配返回 401。仍然没有用户体系、
+限流和审计日志——这是演示级服务，别直接挂到公网。
+
 ## 配置要点
 
 | 配置 | 说明 |
@@ -109,7 +123,9 @@ http://127.0.0.1:8000/?s=退货运费谁承担
 | `retrieval.fusion` | `rrf`（默认，只看排名）或 `weighted`（可调权重） |
 | `retrieval.rerank_mode` | `heuristic` / `llm` / `noop`，用于消融对比 |
 | `retrieval.refuse_threshold` | 精排分低于该值直接拒答（次要信号） |
-| `retrieval.max_unseen_ratio` | 问题里「知识库没出现过的实词」占比阈值，越小越容易拒答（主要信号，用 `eval` 扫描校准） |
+| `retrieval.max_unseen_ratio` | 问题里「知识库没出现过的实词」占比阈值，越小越容易拒答（仅离线词面模式生效） |
+| `retrieval.verify_mode` / `verify_snippets` / `verify_retry_top_k` | 语义拒答校验：判定窗口和 `need_more` 重试窗口；`off` 时退回词面信号 |
+| `retrieval.grounding_mode` | 生成后的接地校验；`off` 时关闭 |
 | `chunking.max_chars` / `overlap_chars` | 切分粒度，影响召回和上下文完整度 |
 | `embedding.provider` | `hash`（离线）或 `remote`（OpenAI 兼容 /embeddings） |
 | `embedding.batch_size` | 单次 embed 请求的条数，默认 10（DashScope text-embedding-v3 上限，超了 400） |
@@ -184,10 +200,11 @@ gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 o
 漏过的 5 条都是"答了相关问题但不是所问"——接地校验按定义查的是**主张是否有依据**，
 查不出"答非所问"。后者是 answerability 校验的职责（实测 11/11 全对）。
 
-代价是多一次模型调用（评测里按 `(问题, 前 3 个 chunk)` 缓存，同一问题只算一次），
+代价是多一次模型调用（评测里按 `(问题, 前 5 个 chunk)` 缓存，同一问题只算一次），
 延迟增加约 1s；离线模式没有这个调用，也**没有可用的拒答能力**（误拒 0、拒答准确 0，等于不拒）。
 
-不可答样本从 5 条补到 18 条（属性/政策/凭证/服务四类），语义校验在 dev 上 11/11、test 上 7/7 全对。
+不可答样本从 5 条补到 18 条（属性/政策/凭证/服务四类），语义校验在 dev 上 11/11，
+test 上 6/7（漏掉「会员可以转给别人吗」：检索到会员等级/优惠券章节，模型判成可答）。
 补样本之前"拒答准确率"只有 3～5 条分母，1 条题就是 20～33 个百分点，数字本身不成立。
 
 **换一批数据还准吗？** 做了一次跨库实验：把 15 篇文档切成「产品参数」和「政策制度」两半，
@@ -200,7 +217,7 @@ gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 o
 | 本库 × 本库问题 | 误拒 1/14 | 那 1 条不是判错：答案排在第 4 位，校验器只看了前 3 条 |
 
 也就是说，**拒答能力并不依赖校准用题的措辞**，但和检索强耦合：答案没进"校验器看得见的窗口"，
-就会被当成"资料里没有"。把窗口从 3 条放宽到 5 条后，dev 误拒 3/23 → 1/23、test 从 6.25% → 0%，
+就会被当成"资料里没有"。把窗口从 3 条放宽到 5 条后，dev 误拒 3/23 → 2/23（0.087）、test 从 6.25% → 0%，
 负样本仍然 11/11 全拒。这条耦合是下一步要根治的地方（见已知限制）。
 
 完整报告见 [docs/eval-report-example.md](docs/eval-report-example.md)。
@@ -212,8 +229,11 @@ gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 o
 - `recall@k_effective`：叠加拒答后的有效召回，两者之差即拒答的代价
 - `MRR`：首个命中排名的倒数均值
 - `refusal_accuracy` / `over_refusal`：拒答准确率与误拒率
-- **阈值扫描**：`max_unseen_ratio` 的取舍表（仅在离线词面模式有意义）
+- **阈值扫描**：`max_unseen_ratio` 的取舍表（只在离线词面模式生成；语义校验模式会自动跳过，因为该阈值不参与判定）
 - **未命中样例**：前 10 条没进 top-k 的 query 及其 gold，方便人工核对标注
+
+> `MRR` 按请求的 top-k 截断后计算。`need_more` 重试会临时扩大检索窗口，早期版本把扩窗后的
+> 第 6–10 名也算进 MRR，数字会略高；现在评测层先截断再算，检索指标不再受拒答策略影响。
 
 评测集格式（`data/eval/queries-dev.jsonl`）：
 
@@ -234,7 +254,7 @@ query / positive / hard-negative 三元组，抽 200 条查询、组织成 3,000
 | recall@5 | 0.7050 | **0.9000** | +19.5pp |
 | MRR | 0.5657 | **0.7205** | +0.155 |
 
-方向与内部集一致（外部 +20pp vs 内部 dev +35pp），说明内部结论不是自己出题刷出来的。
+方向与内部集一致（外部 +20pp vs 内部 dev +21.7pp），说明内部结论不是自己出题刷出来的。
 局限写在 [docs/external-eval.md](docs/external-eval.md)：小语料抽样让绝对值偏乐观、只测检索不测拒答、
 200 条查询下 1 条题就是 0.5pp。
 
@@ -249,10 +269,10 @@ ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db \
          eval --dataset data/external/T2Reranking/queries.jsonl --no-sweep --report reports/ext-hash.md
 ```
 
-> 注意：内部 dev 只有 26 条，能看出**检索层**的配置差异，但样本量不足以外推线上精度。
+> 注意：内部 dev 只有 34 条（可答 23），能看出**检索层**的配置差异，但样本量不足以外推线上精度。
 > 拒答能力依赖模型校验（有 Key 才有）；离线模式下的词面拒答已实测不可用，别当成能力。
 > 换 embedding 模型后必须 `ragagent ingest data/docs --force` 重建索引，否则新旧向量不在同一空间。
-> 判断向量到底有没有生效看 `ragagent stats` 的 `vector_active` / `vectors`——**不要只看 `embedder` 名字**，
+> 判断向量到底有没有生效看 `ragagent stats` 的 `vector_active` / `vectors` / `vectors_loaded` / `vector_retry_pending`——**不要只看 `embedder` 名字**，
 > 配置写了 `enable_vector = true` 不等于库里真有向量（缺向量会打 WARNING 并降级为 BM25+短语）。
 > 想换分词器：`pip install -e ".[zh]"` 后设 `RAGAGENT_TOKENIZER=jieba`（换分词器后同样需重新 ingest）。
 
@@ -297,7 +317,7 @@ rag-agent/
 5. **拒答先降噪、再上语义校验**：原先用「未见实词比例」，在口语化输入上两类样本分布重叠（可答 0.66 vs 不可答 0.78），
    换阈值救不了。先做了降噪（滤掉语气助词/虚词、bigram 只在相邻实词间生成并降权到 0.5）——
    可答样本的比例中位数从 0.67 降到 0.21，误拒随之从 0.48 降到几乎为 0，但**区分度没变好**（两类仍重叠）；
-   所以最终把拒答交给模型语义校验（仅凭检索段落能否回答），词面信号只做离线兜底。误拒 0.48 → 0.04、拒答准确 0.6 → 1.0。
+   所以最终把拒答交给模型语义校验（仅凭检索段落能否回答），词面信号只做离线兜底。误拒 0.48 → 0.087（默认阈值）、拒答准确 0.6 → 1.0。
 6. **父子块**：子块保证召回精度，父块保证回答上下文完整。
 7. **Agent 只给工具出口**：检索/读全文/对比/提交答案都是工具，工具之外不能产生副作用。
 8. **网页只用一个静态文件**：演示要看的是「引用、分数、trace」，不是 SPA 工程；不引入 Node 构建链，
@@ -312,20 +332,25 @@ pytest -q
 覆盖：切分（FAQ/表格/长文）、BM25 排序、RRF 融合、评测指标、Agent 多步循环（FakeChat 注入）、
 静态页挂载（能打开且不挡 API 路由）、向量状态可见性（缺向量时告警而不是静默降级）、
 外部语料批量入库（一条记录 = 一个 chunk）、**gold 只认章节名**的口径回归、
-**拒答信号**（虚词过滤、相邻 bigram、语义校验优先于词面信号）。
+**拒答信号**（虚词过滤、相邻 bigram、语义校验优先于词面信号）、
+**回答失败兜底**（模型报错也要摘录原文，而不是只回一句错误）、
+**Agent 接地校验**（编造答案降级为摘录）、**入库失败退出码**、
+**路径白名单 / API token**、**扩窗结果按 k 截断后再算 MRR**。
 
 ## 实现规模
 
-- 35 个 Python 文件、约 3,700 行（其中测试 8 个文件约 440 行 / 32 个用例，脚本 1 个约 160 行），
-  外加一个约 1,120 行的静态页；语料 15 篇文档 / 121 个 chunk
+- 37 个 Python 文件、约 4,300 行（src 26 个文件 3,442 行；测试 10 个文件 723 行 / 49 个用例；
+  脚本 1 个 163 行），外加一个约 1,130 行的静态页；语料 15 篇文档 / 121 个 chunk
 - 纯 Python 后端 + 一个 HTML 文件；无 Node 构建链、无外部数据库服务：SQLite 单文件即可跑
 
 ## 已知限制
 
 - `config.offline.toml` 的哈希向量没有语义能力，只用于零依赖跑通；`config.toml` 已接真实 embedding（text-embedding-v3）；
 - **离线模式没有可用的拒答能力**：词面信号已实测分不开可答/不可答（balanced 上限 0.70），只会两种极端——全拒或全不拒；
+- 同一份 `config.toml` 在无 Key 时不会立刻报错：查询 embedding 返回 401 后会降级为 BM25+短语
+  （实测 dev recall@3 0.7391 / test 0.75），拒答退回词面信号（实测全不拒）。这条降级路径能跑，但不是推荐配置；
 - 拒答准确率依赖模型语义校验，多一次 LLM 调用（约 +1s）；模型判定偶有噪声，评测里靠缓存避免重复计费；
 - 内部评测集 57 条（dev 34 / test 23；不可答 18 条），足以区分**检索层**的配置差异（dev recall@3 0.70 vs 0.91），但不足以外推线上精度；
 - 外部验证用的是 3,000 条小语料抽样（`C-MTEB/T2Reranking`），recall 绝对值比百万级语料乐观，且只覆盖检索层；
 - SQLite 单机，多租户/高并发需换 PostgreSQL + pgvector；
-- 未做鉴权、限流、重试与结构化日志，属演示级服务，别当生产网关用。
+- 鉴权只有可选的 `RAGAGENT_API_TOKEN`，没有用户体系；限流、重试、结构化日志仍未做，属演示级服务，别当生产网关用。

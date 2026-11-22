@@ -22,7 +22,7 @@ jobs:
             python-version: "3.11"
           - os: ubuntu-latest
             python-version: "3.12"
-          # dev.ps1 是 PowerShell 脚本，Windows 上要保证同样能跑
+          # demo.ps1 是 PowerShell 脚本，Windows 上要保证同样能跑
           - os: windows-latest
             python-version: "3.11"
 
