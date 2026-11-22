@@ -75,10 +75,14 @@ def evaluate(
             refused = bool(getattr(retriever, "last_refused", False)) or not hits
             unseen_ratios.append(retriever.last_unseen_ratio)
             ranks = []
+            doc_ranks = []
             keys = []
+            gold_docs = {gold.split("::")[0] for gold in case.gold}
             for rank, hit in enumerate(hits, start=1):
                 hit_key = f"{hit.chunk.doc_id}::{hit.chunk.section_path}"
                 keys.append(hit_key)
+                if not doc_ranks and hit.chunk.doc_id in gold_docs:
+                    doc_ranks.append(rank)
                 for gold in case.gold:
                     if _match(hit, gold):
                         ranks.append(rank)
@@ -88,6 +92,7 @@ def evaluate(
                     case=case,
                     hit_keys=keys,
                     ranks=ranks,
+                    doc_ranks=doc_ranks,
                     refused=refused,
                 )
             )
@@ -116,6 +121,9 @@ def evaluate(
     for k in k_values:
         hit_count = sum(1 for r in answerable if r.ranks and min(r.ranks) <= k)
         metrics[f"recall@{k}"] = round(hit_count / max(1, len(answerable)), 4)
+        # 文档级召回：只要命中 gold 所在文档即可，抵消「同一答案散落多个章节」的标注歧义
+        doc_hit = sum(1 for r in answerable if r.doc_ranks and min(r.doc_ranks) <= k)
+        metrics[f"recall@{k}_doc"] = round(doc_hit / max(1, len(answerable)), 4)
         # 叠加拒答后的有效召回：业务上用户真正「能拿到答案」的比例
         effective = sum(
             1 for r in answerable if not r.refused and r.ranks and min(r.ranks) <= k

@@ -151,6 +151,7 @@ class CaseResult:
     case: EvalCase
     hit_keys: List[str] = field(default_factory=list)
     ranks: List[int] = field(default_factory=list)
+    doc_ranks: List[int] = field(default_factory=list)
     refused: bool = False
     answer_hit: bool = False
 

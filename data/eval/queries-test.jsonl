@@ -1,0 +1,18 @@
+{"query": "东西拆都没拆，不想要了能寄回去吗", "gold": ["售后政策::退货条件", "退换货细则::七天无理由的边界"], "answerable": true}
+{"query": "为什么票上的钱比我付的少", "gold": ["发票与凭证::开票时效", "发票与凭证::常见问题"], "answerable": true}
+{"query": "付款后多久发货", "gold": ["发货与物流::发货时效"], "answerable": true}
+{"query": "公司报销要用能抵扣的票，得交什么资料", "gold": ["发票与凭证::发票类型"], "answerable": true}
+{"query": "发票什么时候能开", "gold": ["发票与凭证::开票时效", "发票与凭证::常见问题"], "answerable": true}
+{"query": "我人在国外，能寄过去吗", "gold": ["发货与物流::配送范围"], "answerable": true}
+{"query": "抬头填错了还能重开吗", "gold": ["发票与凭证::补开与换开"], "answerable": true}
+{"query": "支持以旧换新吗", "gold": [], "answerable": false}
+{"query": "牙刷刷头多久换一次", "gold": ["商品参数-电动牙刷T3::刷头与更换"], "answerable": true}
+{"query": "用了十天突然不转了，能给换吗", "gold": ["售后政策::退货条件", "售后维修与保修::维修与换货的取舍"], "answerable": true}
+{"query": "电池保修多久", "gold": ["售后维修与保修::保修期限"], "answerable": true}
+{"query": "票找不着了，还能再弄一份吗", "gold": ["发票与凭证::补开与换开"], "answerable": true}
+{"query": "能加盟你们一起做吗", "gold": [], "answerable": false}
+{"query": "退货有什么条件", "gold": ["售后政策::退货条件", "退换货细则::七天无理由的边界"], "answerable": true}
+{"query": "退货运费谁承担", "gold": ["售后政策::退货运费"], "answerable": true}
+{"query": "退质量问题的货要拍什么凭证", "gold": ["发票与凭证::售后凭证要求"], "answerable": true}
+{"query": "钱什么时候能回到我卡里", "gold": ["售后政策::退款时效", "售后政策::常见问题"], "answerable": true}
+{"query": "预售的定金付了不想要了能退吗", "gold": ["促销活动规则::预售定金规则"], "answerable": true}

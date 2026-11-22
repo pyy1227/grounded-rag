@@ -1,0 +1,26 @@
+{"query": "付了两次钱多扣的怎么退", "gold": ["支付与结算::支付失败与重复扣款"], "answerable": true}
+{"query": "会员可以转给别人吗", "gold": [], "answerable": false}
+{"query": "会员折扣能和券一起用吗", "gold": ["会员与优惠::优惠叠加规则", "优惠券与促销::与会员折扣的关系"], "answerable": true}
+{"query": "会员攒到多少成长值才能到最高那档", "gold": ["会员与优惠::会员等级", "会员与优惠::常见问题"], "answerable": true}
+{"query": "便携风扇盒子里都装了什么", "gold": ["商品参数-便携风扇::基本参数"], "answerable": true}
+{"query": "充满一次能用多久", "gold": ["商品参数-便携风扇::续航与充电", "商品参数-便携风扇::常见问题"], "answerable": true}
+{"query": "刚买完就便宜了一百，差价能退我吗", "gold": ["会员与优惠::价保规则"], "answerable": true}
+{"query": "券过期了还能补吗", "gold": ["优惠券与促销::有效期与失效"], "answerable": true}
+{"query": "可以用花呗分期吗", "gold": ["支付与结算::分期付款"], "answerable": true}
+{"query": "可以等收到货再给钱吗", "gold": ["发货与物流::配送范围", "发货与物流::常见问题", "支付与结算::支持的支付方式"], "answerable": true}
+{"query": "地址填错了但还没发出去，能改不", "gold": ["发货与物流::修改地址"], "answerable": true}
+{"query": "快递好几天没动静了", "gold": ["发货与物流::物流异常"], "answerable": true}
+{"query": "手机号换了怎么改绑定", "gold": ["账户与安全::修改绑定信息"], "answerable": true}
+{"query": "换新的要等多久才能发", "gold": ["售后政策::换货流程", "退换货细则::换货周期"], "answerable": true}
+{"query": "放驿站几天不取会退回去", "gold": ["物流合作与自提::自提与驿站"], "answerable": true}
+{"query": "是他们发错颜色了，寄回去的快递钱还要我掏吗", "gold": ["售后政策::退货运费"], "answerable": true}
+{"query": "有员工内购折扣吗", "gold": [], "answerable": false}
+{"query": "注销账号以后记录还在吗", "gold": ["账户与安全::账号注销"], "answerable": true}
+{"query": "积分到年底会清零吗", "gold": ["会员积分与成长值::有效期与清零"], "answerable": true}
+{"query": "耳机能戴着洗澡吗", "gold": ["商品参数-蓝牙耳机E5::常见问题"], "answerable": true}
+{"query": "能带进机舱吗", "gold": ["商品参数-便携风扇::常见问题"], "answerable": true}
+{"query": "能开英文版发票吗", "gold": [], "answerable": false}
+{"query": "能挑一家快递公司吗", "gold": ["发货与物流::常见问题", "物流合作与自提::合作快递"], "answerable": true}
+{"query": "进水了还能免费修吗", "gold": ["售后维修与保修::不属于保修的情况"], "answerable": true}
+{"query": "退过款等级会不会掉", "gold": ["会员与优惠::会员等级"], "answerable": true}
+{"query": "黑卡能享受什么", "gold": ["会员与优惠::会员等级"], "answerable": true}
