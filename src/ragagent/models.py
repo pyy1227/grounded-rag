@@ -126,6 +126,8 @@ class Answer:
     mode: str = "llm"  # llm | extractive
     latency_ms: int = 0
     trace: List[Dict[str, Any]] = field(default_factory=list)
+    # 答案是否通过接地校验（每条主张都能被引用段落支持）；None 表示未校验
+    grounded: Optional[bool] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +137,7 @@ class Answer:
             "mode": self.mode,
             "latency_ms": self.latency_ms,
             "trace": self.trace,
+            "grounded": self.grounded,
         }
 
 

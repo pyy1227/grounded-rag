@@ -46,21 +46,54 @@ def test_verifier_decides_refusal_when_available(temp_env):
 
     class FakeChat:
         name = "fake"
-        answerable = True
+        verdict = "answerable"
 
         def chat(self, messages, tools=None, tool_choice="auto", temperature=None, max_tokens=None):
-            payload = str(self.answerable).lower()
-            return LLMResult(content='{"answerable": %s, "reason": "test"}' % payload)
+            payload = '{"verdict": "%s", "reason": "test"}' % self.verdict
+            return LLMResult(content=payload)
 
     chat = FakeChat()
     retriever.verifier = build_verifier(chat)
 
     assert retriever.search("退货运费谁承担"), "模型说能答时不应拒答"
 
-    chat.answerable = False
+    chat.verdict = "cannot"
     retriever.verifier.cache.clear()
     assert retriever.search("退货运费谁承担") == []
-    assert retriever.last_refusal_reason == "verifier"
+    assert retriever.last_refusal_reason == "verifier_cannot"
+
+
+def test_need_more_triggers_second_retrieval(temp_env):
+    """判定 need_more 时应扩大窗口重试，而不是直接拒答。"""
+    config, storage = temp_env
+    retriever = Retriever(storage, config)
+    retriever._ensure_index()
+
+    calls = {"n": 0}
+
+    class StubVerifier:
+        name = "stub"
+        cache = {}
+
+        def verify_tiered(self, query, hits):
+            calls["n"] += 1
+            # 第一次说"还需要资料"，重试后说"能答"——验证二次检索路径
+            if calls["n"] == 1:
+                return "need_more", "缺关键信息"
+            return "answerable", "够了"
+
+        def verify(self, query, hits):
+            return self.verify_tiered(query, hits)[0] == "answerable", ""
+
+    retriever.verifier = StubVerifier()
+    config.retrieval.top_k = 1  # 第一次只拿 1 条，重试才拿到更宽的窗口
+    config.retrieval.verify_retry_top_k = 5
+    hits = retriever.search("退货运费谁承担")
+
+    assert hits, "二次检索命中后不应拒答"
+    assert calls["n"] >= 2, "应当触发第二次校验"
+    assert retriever.last_sources.get("retried") == 1
+    assert retriever.last_refusal_reason is None
 
 
 def test_incremental_ingest_skips_unchanged(temp_env, temp_docs):

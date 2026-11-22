@@ -18,6 +18,7 @@ from .llm import ChatModel, DemoChat, build_chat
 from .models import Answer, Citation, SearchHit
 from .retrieval.retriever import Retriever
 from .storage import Storage
+from .verify import build_grounding
 
 CITATION_RE = re.compile(r"\[(\d+)\]")
 REFUSE_TEXT = "抱歉，知识库里没有找到足够的信息来回答这个问题，建议转人工确认。"
@@ -41,6 +42,10 @@ class AnswerGenerator:
         self.config = config
         self.retriever = retriever or Retriever(storage, config)
         self.chat = chat or build_chat(config)
+        # 接地校验：有 Key 才启用（离线没有模型，无从校验）
+        self.grounding = None
+        if config.retrieval.grounding_mode == "llm" and config.llm_api_key():
+            self.grounding = build_grounding(self.chat)
 
     def answer(self, query: str, top_k: Optional[int] = None) -> Answer:
         started = time.perf_counter()
@@ -58,7 +63,7 @@ class AnswerGenerator:
         if isinstance(self.chat, DemoChat):
             result = self._extractive_answer(hits, citations)
         else:
-            result = self._llm_answer(query, context, citations)
+            result = self._llm_answer(query, context, citations, hits)
 
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
@@ -91,7 +96,13 @@ class AnswerGenerator:
             )
         return citations
 
-    def _llm_answer(self, query: str, context: str, citations: List[Citation]) -> Answer:
+    def _llm_answer(
+        self,
+        query: str,
+        context: str,
+        citations: List[Citation],
+        hits: Optional[List[SearchHit]] = None,
+    ) -> Answer:
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"资料：\n{context}\n\n问题：{query}"},
@@ -112,12 +123,42 @@ class AnswerGenerator:
         if not used:
             # 没引用说明可能没按资料回答，按拒答处理更安全
             return Answer(text=REFUSE_TEXT, refused=True, mode="llm")
+
+        used_citations = [c for c in citations if c.index in used]
+        grounded, note = self._check_grounding(text, used_citations, hits or [])
+        if not grounded:
+            fallback = self._extractive_answer(
+                hits or [], citations, note="答案未被引用资料支持，已降级为摘录"
+            )
+            fallback.grounded = False
+            return fallback
+
         return Answer(
             text=text,
-            citations=[c for c in citations if c.index in used],
+            citations=used_citations,
             refused=False,
             mode="llm",
+            grounded=True,
         )
+
+    def _check_grounding(
+        self,
+        text: str,
+        used_citations: List[Citation],
+        hits: List[SearchHit],
+    ) -> tuple[bool, str]:
+        """答案里的每条主张是否被引用段落支持；找不到依据就降级为摘录。"""
+        if self.grounding is None:
+            return True, ""
+
+        contexts = []
+        for citation in used_citations:
+            index = citation.index - 1
+            if 0 <= index < len(hits):
+                contexts.append(self.retriever.expand(hits[index], max_chars=800))
+            else:
+                contexts.append(citation.snippet)
+        return self.grounding.check(text, contexts)
 
     def _extractive_answer(
         self,
@@ -137,6 +178,7 @@ class AnswerGenerator:
             citations=[citations[0]] if citations else [],
             refused=False,
             mode="extractive",
+            grounded=True,  # 摘录是原文，天然有依据
         )
 
 
