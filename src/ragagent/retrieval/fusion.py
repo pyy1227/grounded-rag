@@ -1,9 +1,7 @@
-"""多路召回融合：RRF 与加权融合。
+"""多路召回融合。
 
-- RRF（Reciprocal Rank Fusion）：只看排名，不受各源分数量纲影响，鲁棒；
-- 加权融合：把每路分数 min-max 归一后加权，需要调权重，但可解释性强。
-
-两种都实现，评测时用同一套数据对比（见 evaluation.py）。
+RRF 只看排名，不受各路分数量纲影响，比较稳；加权融合先把每路分数 min-max 归一
+再加权，要调权重，但可解释性强。两种都实现，评测时用同一份数据对比。
 """
 from __future__ import annotations
 
@@ -15,10 +13,9 @@ def rrf_fuse(
     k: int = 60,
     weights: Dict[str, float] | None = None,
 ) -> Dict[str, float]:
-    """rank_lists: {source: [chunk_id, ...]}（按分数降序）。返回归一化到 [0,1] 的融合分。
+    """rank_lists: {source: [chunk_id, ...]}，按分数降序。返回归一化到 [0,1] 的融合分。
 
-    weights 用于给不同召回源加权：BM25 的排名通常比哈希向量可靠，
-    不加权时三路等权会把单路强命中的结果挤下去。
+    weights 给不同召回源加权：BM25 名次通常比哈希向量可靠，等权会把单路强命中挤下去。
     """
     raw: Dict[str, float] = {}
     for source, ids in rank_lists.items():

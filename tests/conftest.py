@@ -1,7 +1,7 @@
-"""测试夹具：临时工作目录 + 已入库的迷你知识库。
+"""测试夹具：临时工作目录和一份已入库的迷你知识库。
 
-注意：这里不用 pytest 的 tmp_path——在部分受限环境里系统临时目录不可写，
-统一使用项目内的 .tmp-tests/（已加入 .gitignore）。
+不用 pytest 的 tmp_path：部分受限环境里系统临时目录不可写，统一用项目内的
+.tmp-tests/（已在 .gitignore 里）。
 """
 from __future__ import annotations
 

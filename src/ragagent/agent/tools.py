@@ -1,7 +1,7 @@
 """RAG Agent 的工具集。
 
 工具是 Agent 唯一的动作出口：检索、读全文、列文档、对比、提交答案。
-每个工具都用 Pydantic 定义参数，schema 直接喂给模型，参数校验在服务端做。
+参数用 Pydantic 定义，schema 直接喂给模型，校验在服务端做。
 """
 from __future__ import annotations
 

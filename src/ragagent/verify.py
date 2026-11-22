@@ -1,17 +1,13 @@
-"""拒答与接地校验：用模型判断「资料够不够」和「答案有没有依据」。
+"""拒答与接地校验。
 
-两层：
-1. AnswerabilityVerifier —— 三档判定。
-   - answerable：资料里有明确答案；
-   - need_more：资料相关但缺关键信息 → 由 Retriever 扩大窗口再检索一次；
-   - cannot：资料无关或确实没有 → 直接拒答。
-   分三档是为了区分「资料里没有」和「这次没检索到」，后者不该直接判死。
+AnswerabilityVerifier 在回答前判断检索到的资料够不够，分三档：
+answerable 直接作答，need_more 由 Retriever 扩大窗口再检索一次，cannot 拒答。
+need_more 单独一档，是为了区分资料确实没有和这次没检索到。
 
-2. GroundingVerifier —— 答案接地校验。
-   生成完成后检查答案里的每条事实主张能否在引用段落中找到依据；
-   找不到就降级为摘录，避免"资料里有、模型却编"的幻觉。
+GroundingVerifier 在生成后检查答案里的每条主张能否在引用段落中找到依据，
+找不到就降级为摘录。
 
-离线（没有 API Key）时两者都不启用，Retriever 退回词面信号。
+没有 API Key 时两者都不启用，Retriever 退回词面信号。
 """
 from __future__ import annotations
 
@@ -106,7 +102,7 @@ class LLMVerifier:
                 else:
                     raise ValueError(f"无法识别的判定：{verdict!r}")
             outcome = (verdict, str(payload.get("reason") or ""))
-        except Exception as exc:  # 校验失败不当作拒答，避免把故障变成"不知道"
+        except Exception as exc:  # 校验失败按可答处理，不让故障变成拒答
             outcome = (ANSWERABLE, f"校验失败，按可答处理：{type(exc).__name__}")
 
         self.cache[key] = outcome
@@ -153,7 +149,7 @@ class GroundingVerifier:
             if unsupported:
                 reason = f"{reason}；无依据片段：{unsupported[:2]}"
             return bool(payload["supported"]), reason
-        except Exception as exc:  # 校验失败不阻断回答
+        except Exception as exc:  # 校验失败不拦截回答
             return True, f"接地校验失败，按通过处理：{type(exc).__name__}"
 
 

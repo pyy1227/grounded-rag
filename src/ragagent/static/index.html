@@ -37,7 +37,7 @@
   a { color: var(--accent); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
-  /* ---------- 顶栏 ---------- */
+  /* 顶栏 */
   .topbar {
     position: sticky;
     top: 0;
@@ -69,7 +69,7 @@
   .pill + .pill::before { content: "·"; margin: 0 8px; color: #d9d9d9; }
   .pill.pill-warn, .pill.pill-warn b { color: var(--warn); }
 
-  /* ---------- 标签栏 ---------- */
+  /* 标签栏 */
   .tabbar { background: var(--panel); border-bottom: 1px solid var(--border); }
   .tabs { display: flex; gap: 28px; max-width: 1180px; margin: 0 auto; padding: 0 20px; }
 
@@ -99,7 +99,7 @@
   .panel { display: none; }
   .panel.active { display: block; }
 
-  /* ---------- 基础元件 ---------- */
+  /* 基础元件 */
   .card {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -176,7 +176,7 @@
     font-size: 12.5px;
   }
 
-  /* ---------- 问答 ---------- */
+  /* 问答 */
   .searchbar { padding: 12px; }
   .searchbar input[type="text"] { flex: 1 1 320px; min-width: 0; }
 
@@ -243,7 +243,7 @@
   .cite-foot { margin-top: 6px; }
   .chunk-id { font-family: var(--mono); font-size: 11px; color: #bfbfbf; }
 
-  /* ---------- Agent 轨迹 ---------- */
+  /* Agent 轨迹 */
   .trace-card { margin-top: 12px; padding: 14px 16px; }
   .trace-card .section-title { margin-top: 0; }
 
@@ -273,7 +273,7 @@
   .trace-pre.err { background: #fff2f0; border-color: #ffccc7; color: var(--danger); }
   .trace-note { margin-top: 4px; font-size: 12px; color: var(--warn); }
 
-  /* ---------- 检索结果 ---------- */
+  /* 检索结果 */
   .result-count { margin: 14px 0 8px; font-size: 12px; color: var(--text-3); }
   .hit { padding: 12px 14px; margin-bottom: 8px; }
 
@@ -337,7 +337,7 @@
   }
   .expand:hover { text-decoration: underline; }
 
-  /* ---------- 表格 ---------- */
+  /* 表格 */
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -346,7 +346,7 @@
   td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
   td.wrap { white-space: normal; }
 
-  /* ---------- 评测 ---------- */
+  /* 评测 */
   .metric-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
@@ -371,7 +371,7 @@
   summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); }
   summary:hover { color: var(--accent); }
 
-  /* ---------- 状态 ---------- */
+  /* 状态 */
   .empty { padding: 40px 16px; text-align: center; font-size: 13px; color: var(--text-3); }
 
   .error-box {
@@ -443,7 +443,7 @@
 </div>
 
 <main>
-  <!-- ==================== 问答 ==================== -->
+  <!-- 问答 -->
   <section class="panel active" id="panel-ask">
     <form class="card searchbar" id="ask-form">
       <div class="row">
@@ -471,7 +471,7 @@
     </div>
   </section>
 
-  <!-- ==================== 检索 ==================== -->
+  <!-- 检索 -->
   <section class="panel" id="panel-search">
     <form class="card searchbar" id="search-form">
       <div class="row">
@@ -491,7 +491,7 @@
     </div>
   </section>
 
-  <!-- ==================== 知识库 ==================== -->
+  <!-- 知识库 -->
   <section class="panel" id="panel-docs">
     <div class="card searchbar">
       <div class="row">
@@ -514,7 +514,7 @@
     </div>
   </section>
 
-  <!-- ==================== 评测 ==================== -->
+  <!-- 评测 -->
   <section class="panel" id="panel-eval">
     <div class="card searchbar">
       <div class="row">
@@ -538,7 +538,7 @@
 (() => {
   "use strict";
 
-  // ==================== 工具 ====================
+  // 工具
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
@@ -616,7 +616,7 @@
     container.appendChild(box);
   }
 
-  // ==================== 标签页 ====================
+  // 标签页
   const tabs = $$(".tab");
 
   function activateTab(name) {
@@ -634,7 +634,7 @@
 
   tabs.forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
 
-  // ==================== 索引状态 ====================
+  // 索引状态
   const state = { health: null, docsLoaded: false, lastEval: null };
 
   function renderHealth(health) {
@@ -683,7 +683,7 @@
     toast("已刷新索引状态");
   });
 
-  // ==================== 问答 ====================
+  // 问答
   const modeLabel = {
     llm: "LLM 回答",
     extractive: "摘录回答",
@@ -891,7 +891,7 @@
     });
   });
 
-  // ==================== 检索 ====================
+  // 检索
   function highlightText(text, query) {
     const source = String(text ?? "");
     const raw = String(query ?? "").trim();
@@ -1021,7 +1021,7 @@
     runSearch(query);
   });
 
-  // ==================== 知识库 ====================
+  // 知识库
   async function loadDocs() {
     const table = $("#docs-table");
     table.innerHTML = "";
@@ -1105,7 +1105,7 @@
     return wrap;
   }
 
-  // ==================== 评测 ====================
+  // 评测
   function metricCard(label, value, good, raw) {
     const card = el("div", "metric");
     card.appendChild(el("div", "k", label));
@@ -1227,7 +1227,7 @@
     }
   });
 
-  // ==================== 启动 ====================
+  // 启动
   // 深链接：?q=问题[&mode=agent][&k=5] 直接跑问答，?s=关键词 直接检索。
   // 演示时可以直接把链接发出去，不用现场输入。
   const params = new URLSearchParams(location.search);

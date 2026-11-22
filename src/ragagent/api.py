@@ -74,8 +74,7 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
     generator = AnswerGenerator(storage, app_config, retriever)
     agent = AgentRunner(storage, app_config, retriever=retriever)
 
-    # ==================== 安全边界 ====================
-    # 服务端只允许读写配置好的目录，避免 /ingest、/eval 变成任意文件读写。
+    # 安全边界：只允许读写配置好的目录，避免 /ingest、/eval 变成任意文件读写
     ingest_root = Path(os.environ.get("RAGAGENT_INGEST_ROOT", DEFAULT_DOCS)).resolve()
     eval_root = Path(os.environ.get("RAGAGENT_EVAL_ROOT", "data/eval")).resolve()
     report_root = Path(os.environ.get("RAGAGENT_REPORT_ROOT", "reports")).resolve()
@@ -96,7 +95,7 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
         return resolved
 
     def require_token(request: Request) -> None:
-        """设置了 RAGAGENT_API_TOKEN 才启用；不设置时保持本地零配置体验。"""
+        """设置了 RAGAGENT_API_TOKEN 才校验，不设置时不鉴权，方便本地开发。"""
         if not api_token:
             return
         provided = request.headers.get("x-api-token", "").strip()
@@ -133,7 +132,7 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
             "chunks": storage.count_chunks(),
             "embedder": model,
             "vector_enabled": app_config.retrieval.enable_vector,
-            # 这是**运行态**：embedding 服务失败后这里会变 false，不要只看配置或库里有几条向量
+            # 运行态：embedding 服务失败后这里会变 false，不能只看配置或库里的向量条数
             "vector_active": status["vector_active"],
             "vectors": vectors_in_db,
             "vectors_loaded": status["vectors"],
@@ -204,7 +203,7 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
         cases = load_dataset(dataset)
         result = evaluate(retriever, cases, k_values=app_config.evaluation.k_values, dataset=str(dataset))
 
-        # 语义校验优先于词面信号，此时扫描 max_unseen_ratio 只会得到一张恒等的表
+        # 语义校验优先于词面信号，此时扫 max_unseen_ratio 只会得到一张恒等的表
         sweep_enabled = bool(request.sweep) and getattr(retriever, "verifier", None) is None
         extra = {"sweep": sweep_thresholds(retriever, cases)} if sweep_enabled else {}
         if report_path:
@@ -221,7 +220,7 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
         result["sweep_skipped"] = bool(request.sweep) and not sweep_enabled
         return result
 
-    # 静态页必须最后挂载：Starlette 按注册顺序匹配，挂到 "/" 会兜住所有未命中路径，
+    # 静态页必须最后挂载：Starlette 按注册顺序匹配，挂到 "/" 会接住所有未命中路径，
     # 放前面会把 /health、/chat 等接口一起吃掉。
     if STATIC_DIR.is_dir():
         app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")

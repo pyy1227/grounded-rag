@@ -1,10 +1,8 @@
 """结构化切分。
 
-策略（按优先级）：
-1. FAQ：识别 Q/A 成对内容，一问一答一个 chunk，避免被切断；
-2. 表格：整表一个 chunk（过长按行拆，保留表头）；
-3. 正文：按段落贪心打包到 max_chars，带 overlap；
-4. 父子块：章节过长时生成 parent chunk，子块检索命中后回填父块上下文。
+按优先级：FAQ 成对内容一问一答一个 chunk；表格整表一个 chunk，过长按行拆且保留表头；
+正文按段落贪心打包到 max_chars，带 overlap；章节过长时生成 parent chunk，
+子块命中后回填父块上下文。
 """
 from __future__ import annotations
 
@@ -22,8 +20,8 @@ FAQ_A_RE = re.compile(r"^\s*(?:A|答)\s*[:：]\s*(.+)$", re.IGNORECASE)
 def chunk_document(doc: ParsedDocument, cfg: ChunkingConfig) -> List[Chunk]:
     """把一篇文档切成 chunk 列表（含 parent）。
 
-    父块按「章节」生成：章节总长度超过 max_chars 且被拆成多块时，
-    生成一个 parent chunk，所有子块指向它，检索命中子块后回填父块上下文。
+    父块按章节生成：章节总长超过 max_chars 且被拆成多块时，生成一个 parent chunk，
+    子块都指向它，检索命中子块后回填父块上下文。
     """
     chunks: List[Chunk] = []
     ordinal = 0
@@ -78,7 +76,7 @@ def chunk_document(doc: ParsedDocument, cfg: ChunkingConfig) -> List[Chunk]:
 
 
 def _ensure_size(pieces: List[tuple[str, str]], cfg: ChunkingConfig) -> List[tuple[str, str]]:
-    """FAQ 或表格的单块可能超长，这里再做一次兜底切分。"""
+    """FAQ 或表格的单块可能超长，这里再拆一次。"""
     result: List[tuple[str, str]] = []
     for text, kind in pieces:
         if len(text) <= cfg.max_chars:

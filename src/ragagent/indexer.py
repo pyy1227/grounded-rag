@@ -1,9 +1,7 @@
-"""入库流水线：解析 → 切分 → 向量化 → 落库（增量）。
+"""入库流水线：解析、切分、向量化、落库。
 
-幂等设计：
-- 文件 sha256 不变且未指定 --force 时跳过，避免重复 embedding 计费；
-- 整篇替换 chunk，文档更新不会残留旧块；
-- 先算完 chunk/向量再写库，embedding 失败不会破坏已有索引。
+文件 sha256 没变且没给 --force 就跳过，避免重复 embedding 计费；更新时整篇替换 chunk，
+不留旧块；先算完 chunk 和向量再写库，embedding 失败不会破坏已有索引。
 """
 from __future__ import annotations
 
@@ -112,7 +110,7 @@ class Indexer:
 
         report.elapsed_ms = int((time.perf_counter() - started) * 1000)
         report.stats = {
-            # documents 只数**成功处理**的文档（added/updated/skipped），失败的不算
+            # documents 只数成功处理的文档（added/updated/skipped），失败的不算
             "documents": len(report.added) + len(report.updated) + len(report.skipped),
             "attempted": len(files),
             "errors": len(report.errors),
@@ -167,10 +165,10 @@ class Indexer:
         return vectors
 
     def ingest_records(self, records: Iterable[dict]) -> dict:
-        """「一条记录 = 一个 chunk」的批量入库，供外部公开评测集使用。
+        """一条记录当一个 chunk 批量入库，给外部公开评测集用。
 
-        外部数据集本身就是「query ↔ passage」，passage 不需要再解析或切分，
-        所以走这条旁路：直接建 chunk、算向量、一次事务写库。
+        外部数据集本身就是 query 和 passage 配对，passage 不用再解析切分，
+        所以直接建 chunk、算向量、一次事务写库。
         记录格式：{"doc_id": "...", "title": "...", "text": "..."}
         """
         started = time.perf_counter()
@@ -188,8 +186,8 @@ class Indexer:
             raise ValueError("没有可入库的记录")
 
         now = datetime.now(timezone.utc).isoformat()
-        # 安全阀：外部语料可能夹着超长 passage（实测最长 6.8 万字），
-        # 直接送 embedding 会被服务端 400 整批打回。截断后再算向量，正文仍完整入库。
+        # 外部语料里可能夹着超长 passage（实测最长 6.8 万字），直接送 embedding 会被
+        # 服务端 400 整批打回，所以截断后再算向量，正文仍完整入库。
         matrix = self._embed([text[:_EMBED_MAX_CHARS] for _, _, text in prepared])
         chunks: List[Chunk] = []
         documents: List[DocumentRecord] = []

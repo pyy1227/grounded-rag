@@ -35,31 +35,28 @@
 | 项 | 要求 | 说明 |
 | --- | --- | --- |
 | Python | **3.11 或更高** | `pyproject.toml` 要求 `>=3.11`；CI 覆盖 3.11 / 3.12 |
-| 依赖管理 | `uv`（推荐）或 `pip` | uv 按 `uv.lock` 精确复现；pip 用仓库根目录的 `requirements.txt`（已锁定版本） |
+| 依赖管理 | `uv`（推荐） | `pyproject.toml` 声明依赖，`uv.lock` 锁版本；没装 uv 也可以 `pip install -e ".[dev]"`，只是不锁版本 |
 | 模型 Key | **可以没有** | 在线配置需要 `DEEPSEEK_API_KEY` + `DASHSCOPE_API_KEY`；没有 Key 就用 `config.offline.toml`，全流程离线可跑 |
 | 网络 | 可选 | 在线配置需能访问 `api.deepseek.com`、`dashscope.aliyuncs.com`；离线配置不联网 |
 | 操作系统 | Windows / Linux / macOS | 演示脚本是 PowerShell（Windows 自带 5.1+），其余功能跨平台 |
 | 中文分词 | 可选 | 默认字符 bigram；装 jieba 并设 `RAGAGENT_TOKENIZER=jieba` 才切换成词典分词 |
 
-装依赖，三选一：
+装依赖：
 
 ```bash
-# 1) uv（推荐）：按 uv.lock 复现
 uv sync --extra dev
 
-# 2) pip + requirements.txt：版本全部锁定，适合没装 uv 的机器
+# 没装 uv 的机器
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-pip install -e .                   # 装项目本身，得到 ragagent 命令
-
-# 3) 只装项目：依赖交给 pyproject 解析，版本不锁
-pip install -e ".[dev]"
+pip install -e ".[dev]"            # 装项目和开发依赖，版本交给 pyproject 解析
 ```
+
+`pip install -e ".[dev]"` 不会按 `uv.lock` 锁版本；要复现同一套版本，用 uv。
 
 装完执行 `ragagent --help`，应能列出 `ingest / search / ask / agent / eval / stats / ingest-jsonl / serve` 8 个子命令。
 
-可选的中文分词（`requirements.txt` 里已经包含 jieba，这里只是切换统计方式）：
+可选的中文分词（jieba 在 `[zh]` extra 里，`uv sync --extra zh` 或 `pip install jieba`）：
 
 ```bash
 export RAGAGENT_TOKENIZER=jieba    # Windows: $env:RAGAGENT_TOKENIZER="jieba"
@@ -69,7 +66,7 @@ export RAGAGENT_TOKENIZER=jieba    # Windows: $env:RAGAGENT_TOKENIZER="jieba"
 
 ```bash
 cd rag-agent
-uv sync --extra dev          # pip 路线见上「前置条件」
+uv sync --extra dev          # 没装 uv 见上「前置条件」
 
 # 仓库带两份配置：
 #   config.toml         → DeepSeek(对话) + DashScope(向量)，需要 .env 里的 key
@@ -316,7 +313,9 @@ gold 只认 `section_path`，**不认正文**：早期版本写成「章节名 o
 | --- | ---: | ---: | ---: |
 | 未见实词比例（旧：全量 token 等权） | 0.70 | 0.61 | 1.00 |
 | 未见实词比例（新：滤虚词 + bigram 降权） | 0.74 | 0.52 | 1.00 |
-| **语义校验（现，`verify_mode = "llm"`）** | — | **0.13** | **1.00** |
+| **语义校验（现，`verify_mode = "llm"`）** | 0.96 | **0.0870** | **1.00** |
+
+语义校验没有可扫的阈值，只有一个工作点；它的 balanced 按（1 − 误拒率 + 拒答准确率）/ 2 算出。
 
 同一份 dev、同一个默认阈值（`max_unseen_ratio = 0.8`）下：
 
@@ -447,7 +446,6 @@ rag-agent/
 │   └── static/index.html # 网页（单文件原生 JS，无构建）
 ├── data/docs/            # demo 文档（15 篇）
 ├── data/eval/            # 内部评测集（queries-dev / queries-test）
-├── requirements.txt      # pip 依赖清单（版本锁定，见「前置条件」）
 ├── docs/eval-report-example.md  # 内部评测报告示例
 ├── docs/external-eval.md        # 外部数据集验证（C-MTEB）
 ├── scripts/prepare_cmteb.py     # 外部评测集预处理

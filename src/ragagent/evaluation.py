@@ -1,15 +1,13 @@
-"""离线评测：检索质量与拒答质量分开度量。
+"""离线评测：检索质量和拒答质量分开度量。
 
-指标定义：
-- recall@k：answerable 样本中，检索结果前 k 条里至少命中一条 gold 的比例（不经过拒答过滤）
-- recall@k(effective)：在 recall@k 基础上再叠加拒答——被拒答的样本算未命中
-- MRR：第一条 gold 命中排名的倒数均值（不经过拒答过滤）
-- refusal_accuracy：不可回答样本被正确拒答的比例
-- over_refusal：可回答样本被误拒的比例（越低越好）
-- 阈值扫描：max_unseen_ratio 从小到大的取舍，用 recall@k(effective) 看业务侧真实损失
+recall@k：可答样本里，前 k 条至少命中一条 gold 的比例，不经过拒答过滤。
+recall@k(effective)：在 recall@k 基础上叠加拒答，被拒的样本算未命中。
+MRR：第一条 gold 命中的排名倒数均值，不经过拒答过滤。
+refusal_accuracy：不可答样本被正确拒答的比例。
+over_refusal：可答样本被误拒的比例，越低越好。
+阈值扫描：max_unseen_ratio 从小到大扫，用 recall@k(effective) 看业务侧的真实损失。
 
-为什么要拆：如果 recall@k 直接在「拒答之后」的结果上算，检索变差和拒答变激进会混成
-同一个数字，既看不出是哪一层的问题，也没法比较两路召回的差异。
+指标必须在拒答之前算：否则检索变差和拒答变激进会混成一个数字，分不清是哪一层的问题。
 """
 from __future__ import annotations
 
@@ -68,7 +66,7 @@ def evaluate(
     unseen_ratios: List[float] = []
     try:
         for case in cases:
-            # 关掉拒答过滤，先把「检索命中了没有」单独拿到手
+            # 关掉拒答过滤，先单独拿到检索命中情况
             hits: List[SearchHit] = retriever.search(
                 case.query, top_k=max_k, use_rerank=True, apply_refusal=False
             )
@@ -124,10 +122,10 @@ def evaluate(
     for k in k_values:
         hit_count = sum(1 for r in answerable if r.ranks and min(r.ranks) <= k)
         metrics[f"recall@{k}"] = round(hit_count / max(1, len(answerable)), 4)
-        # 文档级召回：只要命中 gold 所在文档即可，抵消「同一答案散落多个章节」的标注歧义
+        # 文档级召回：命中 gold 所在文档即可，抵消同一答案散落多个章节的标注歧义
         doc_hit = sum(1 for r in answerable if r.doc_ranks and min(r.doc_ranks) <= k)
         metrics[f"recall@{k}_doc"] = round(doc_hit / max(1, len(answerable)), 4)
-        # 叠加拒答后的有效召回：业务上用户真正「能拿到答案」的比例
+        # 叠加拒答后的有效召回：用户视角真正拿到答案的比例
         effective = sum(
             1 for r in answerable if not r.refused and r.ranks and min(r.ranks) <= k
         )
@@ -175,13 +173,13 @@ def sweep_thresholds(
     cases: Iterable[EvalCase],
     thresholds: Iterable[float] = (1.0, 0.9, 0.8, 0.7, 0.6, 0.5),
 ) -> List[Dict[str, Any]]:
-    """拒答阈值扫描：max_unseen_ratio 越小越激进（更多拒答）。
+    """拒答阈值扫描：max_unseen_ratio 越小越激进，拒得越多。
 
-    输出 recall@5(effective) / 误拒率 / 拒答准确率三者的取舍表，用于按业务风险选点。
-    recall 用 effective 版本——用户视角的损失里，被误拒和检索没命中一样算没拿到答案。
+    输出 recall@5(effective)、误拒率、拒答准确率的取舍表，按业务风险选点。
+    recall 用 effective 版本：用户视角下，被误拒和检索没命中一样是没拿到答案。
 
-    语义校验（verifier）启用时它以模型判定为准，max_unseen_ratio 根本不参与决策，
-    扫描只会得到一张恒等的表；此时直接返回空，由调用方跳过。
+    开了语义校验时它以模型判定为准，max_unseen_ratio 不参与决策，扫出来是一张
+    恒等的表，所以直接返回空，由调用方跳过。
     """
     if getattr(retriever, "verifier", None) is not None:
         return []
@@ -218,7 +216,7 @@ def write_report(result: Dict[str, Any], path: str | Path, extra: Optional[Dict[
         "| 指标 | 数值 |",
         "| --- | ---: |",
     ]
-    # recall 指标按 k 动态列出（含文档级口径，避免「报告里没有 README 说的 recall@k_doc」）
+    # recall 指标按 k 动态列出，带上文档级口径，避免报告和 README 说法对不上
     recall_keys: List[str] = []
     recall_ks = sorted(
         {
@@ -280,12 +278,12 @@ def write_report(result: Dict[str, Any], path: str | Path, extra: Optional[Dict[
 
 
 def _match(hit: SearchHit, gold: str) -> bool:
-    """gold 形如 `doc_id::章节关键字`；章节关键字为空时只比 doc_id。
+    """gold 形如 `doc_id::章节关键字`；关键字为空时只比 doc_id。
 
-    只认 `section_path`，**不看正文**。宽松口径（章节名 or 正文含关键字）会把
-    「见退货运费表格」这类只是引用别处的段落也算命中，机制上会虚高；
-    本集实测两种口径数值相同（0.963 / 0.778），因为 gold 都写成了真实章节名，
-    但保留严格口径是为了避免以后新增题目时再踩这个坑。
+    只认 section_path，不看正文。宽松口径（章节名或正文含关键字）会把
+    见退货运费表格这类只是引用别处的段落也算命中，数值虚高。
+    本集两种口径结果一样（0.963 / 0.778），因为 gold 都写了真实章节名；
+    保留严格口径是为了以后加题时不再踩这个坑。
     """
     if "::" in gold:
         doc_id, keyword = gold.split("::", 1)

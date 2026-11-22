@@ -1,10 +1,9 @@
 """Embedding 提供方。
 
-两种实现：
-- RemoteEmbedder：调用 OpenAI 兼容的 /embeddings（生产用，语义质量好）；
-- HashEmbedder：本地确定性哈希向量（离线跑通/单测用，没有语义能力，必须显式标注）。
+RemoteEmbedder 调 OpenAI 兼容的 /embeddings，语义质量好，生产用。
+HashEmbedder 是本地确定性哈希向量，只能离线跑通和单测，没有语义能力。
 
-设计上把向量维度也放进模型名（例如 hash-256），避免换模型后新旧向量混用。
+模型名里带维度和分词模式（如 hash-256-bigram），换模型或换分词器后新旧向量不会混用。
 """
 from __future__ import annotations
 
@@ -28,14 +27,13 @@ class Embedder(Protocol):
 class HashEmbedder:
     """把 token 哈希到固定维度，带符号累加后做 L2 归一化。
 
-    只能捕捉字面重叠，不能理解同义——它的价值是让整条链路在无外部服务时也能跑通。
+    只能捕捉字面重叠，不理解同义；作用是让整条链路在没有外部服务时也能跑通。
     """
 
     def __init__(self, dim: int = 256) -> None:
         self.dim = dim
-        # 模型名带分词模式：换分词器后向量不兼容，避免新旧向量混用。
-        # 注意必须和 tokenization 共用同一套分词（见 _tokenize 的导入），否则
-        # 名字说 bigram、实际按 jieba 切，换台机器装没装 jieba 会静默换向量空间。
+        # 模型名带上分词模式，换分词器后向量不兼容。必须和 tokenization 用同一套分词，
+        # 否则名字写 bigram、实际按 jieba 切，换台机器就静默换了向量空间。
         self.model = f"hash-{dim}-{tokenizer_mode()}"
 
     def embed(self, texts: Sequence[str]) -> np.ndarray:

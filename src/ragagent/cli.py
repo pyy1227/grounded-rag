@@ -163,7 +163,7 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 
 def cmd_ingest_jsonl(args: argparse.Namespace) -> int:
-    """外部评测集专用：一条记录 = 一个 chunk，跳过解析与切分。"""
+    """外部评测集专用：一条记录当一个 chunk，跳过解析和切分。"""
     from .indexer import Indexer
 
     config = _load_config(args)

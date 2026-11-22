@@ -1,20 +1,19 @@
 """从 C-MTEB 生成一份小规模外部检索评测集。
 
-为什么需要它：仓库自带的 32 条集是自己出题、自己标 gold、还在同一份上选阈值，
-只能做内部对比。外部数据集的**题不是我们写的**，用来验证结论不是"自己给自己打分"。
+自带那 32 条题是自己出的、gold 也是自己标的，只能做内部对比；外部数据集的题
+不是我们写的，用来验证结论不是自己给自己打分。
 
-用的数据：`C-MTEB/T2Reranking`（中文，6,129 条 query / positive / hard negative 三元组）。
-它原本是 reranking 任务，这里把正例和难负例组织成一份小语料，转成检索任务：
-  - 语料 = 抽样查询的正例 + 其他查询的正例/难负例里随机补齐（默认 3,000 条）
-  - 评测 = 每条查询的 gold 就是它自己的正例 passage
-这样既有真标注，又不依赖 qrels（C-MTEB 的 retrieval 子集只放了 corpus + queries，没放 qrels）。
+用的数据是 C-MTEB/T2Reranking（中文，6,129 条 query / positive / hard negative 三元组）。
+它本来是 reranking 任务，这里把正例和难负例组织成一份小语料，转成检索任务：
+语料 = 抽样查询的正例 + 其他查询的正例或难负例随机补齐（默认 3,000 条）；
+评测 = 每条查询的 gold 就是它自己的正例 passage。
+这样既有真标注，也不依赖 qrels（C-MTEB 的 retrieval 子集只放了 corpus 和 queries）。
 
 用法：
     python scripts/prepare_cmteb.py --dataset T2Reranking --queries 200 --corpus 3000
 
-依赖 pyarrow：pip install "pyarrow<17"
-（pyarrow 17+ 要求 numpy>=2，而本项目锁了 numpy<2，装 17 以上会要求升级 numpy）
-parquet 会从 hf-mirror 自动下载并缓存到 data/external/cache/（已存在则复用）。
+依赖 pyarrow<17（17+ 要求 numpy>=2，本项目锁了 numpy<2）。
+parquet 从 hf-mirror 下载并缓存到 data/external/cache/，已存在就复用。
 """
 from __future__ import annotations
 
@@ -104,7 +103,7 @@ def main() -> int:
     rows = _read_rows(parquet)
     print(f"原始样本 {len(rows)} 条，列：{sorted(rows[0])}")
 
-    # 1) 收集所有 passage（正例 + 难负例），按清洗后的文本去重
+    # 收集所有 passage：正例和难负例，按清洗后的文本去重
     text_to_pid: Dict[str, str] = {}
     pid_text: List[str] = []
 
@@ -130,7 +129,7 @@ def main() -> int:
 
     print(f"passage 去重后 {len(pid_text)} 条，可用查询 {len(triples)} 条")
 
-    # 2) 抽样：先抽查询，再由"正例 + 随机补齐"组成语料
+    # 抽样：先抽查询，语料由正例和随机补齐的其他 passage 组成
     rng = random.Random(args.seed)
     rng.shuffle(triples)
     sampled = triples[: args.queries]
@@ -143,7 +142,7 @@ def main() -> int:
     corpus_set = set(corpus_pids)
     print(f"评测语料 {len(corpus_pids)} 条（正例 {len(keep)} 条）")
 
-    # 3) 写出
+    # 写出
     out = Path("data/external") / args.dataset
     out.mkdir(parents=True, exist_ok=True)
     truncated = 0

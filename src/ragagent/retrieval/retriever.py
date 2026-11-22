@@ -1,4 +1,4 @@
-"""检索编排：三路召回 → 融合 → 精排 → 阈值拒答。"""
+"""检索编排：三路召回、融合、精排和拒答判定。"""
 from __future__ import annotations
 
 import logging
@@ -50,7 +50,7 @@ class Retriever:
         self._vector: Optional[VectorIndex] = None
         self.last_sources: Dict[str, int] = {}
         self.last_unseen_ratio: float = 0.0
-        # 向量那一路是否真的可用（配置写了 enable_vector 不等于库里有向量）
+        # 向量那一路是否真的可用；配了 enable_vector 不代表库里有向量
         self.vector_active: bool = False
         self.vector_count: int = 0
         # embedding 服务失败后的冷却时间：不把索引永久置空，到点自动重试
@@ -59,7 +59,6 @@ class Retriever:
         self.last_refused: bool = False
         self.last_refusal_reason: Optional[str] = None
 
-    # ==================== 索引 ====================
     def _current_signature(self) -> tuple:
         return (
             self.storage.count_chunks(),
@@ -87,10 +86,7 @@ class Retriever:
         self._signature = signature
 
     def index_status(self) -> Dict[str, object]:
-        """运行态：向量这一路当前是否可用、加载了几条、是否在失败冷却中。
-
-        `/health` 和 `ragagent stats` 用它，避免只看「库里有多少向量」而误判。
-        """
+        """向量这一路是否可用、加载了几条、是否在失败冷却中。给 /health 和 stats 用。"""
         self._ensure_index()
         return {
             "vector_active": self.vector_active,
@@ -99,10 +95,10 @@ class Retriever:
         }
 
     def _warn_if_vectors_missing(self) -> None:
-        """开了向量检索但库里没有对应模型的向量时，明确告警，不静默降级。
+        """开了向量检索但库里没有对应模型的向量时告警，不静默降级。
 
-        安静的降级最坑：`vector` 分数一律是 0、`reasons` 里没有 vector#，
-        但接口照常返回，看起来「三路召回」其实只跑了两路。
+        静默降级时 vector 分数全是 0、reasons 里也没有 vector#，接口照常返回，
+        看着像三路召回，其实只跑了两路。
         """
         if not self.config.retrieval.enable_vector or self.vector_active or not self._chunks:
             return
@@ -117,7 +113,7 @@ class Retriever:
     def invalidate(self) -> None:
         self._signature = None
 
-    # ==================== 检索 ====================
+    # 检索
     def search(
         self,
         query: str,
@@ -129,9 +125,8 @@ class Retriever:
     ) -> List[SearchHit]:
         """检索。
 
-        `apply_refusal=False` 时只算拒答判定、不据此清空结果——评测要用它把
-        「检索有没有命中」和「该不该拒答」两个能力分开度量，否则 recall@k 里
-        混着拒答策略的影响，看不出检索本身变好还是变差。
+        apply_refusal=False 时只算拒答判定、不清空结果。评测要分开度量检索命中和
+        该不该拒答，否则 recall@k 里混进拒答策略，看不出检索本身的变化。
         """
         query = str(query or "").strip()
         if not query:
@@ -160,10 +155,9 @@ class Retriever:
         use_vector: Optional[bool] = None,
         use_rerank: Optional[bool] = None,
     ) -> List[SearchHit]:
-        """纯检索：三路召回 → 融合 → 精排，不做拒答判断。
+        """纯检索：三路召回、融合、精排，不做拒答判断。
 
-        和 `search` 拆开是为了让拒答判定能**二次检索**（判定 need_more 时扩大窗口重试），
-        同时保证评测可以直接拿纯检索结果算 recall。
+        单独拆出来是因为 need_more 判定要二次检索，评测也要直接拿纯检索结果算 recall。
         """
         self._ensure_index()
         if not self._chunks:
@@ -186,8 +180,8 @@ class Retriever:
                 ]
                 self.vector_active = True
             except Exception as exc:  # embedding 服务不可用时降级，不影响主流程
-                # 注意：**不要**把 self._vector 置空。一次网络抖动就永久退化成 BM25+短语，
-                # 直到重新入库才会恢复；这里只进入冷却，下次检索继续尝试。
+                # 不要在这里把 self._vector 置空：一次网络抖动就会永久退化成
+                # BM25+短语，直到重新入库才恢复。这里只进冷却，下次检索继续尝试。
                 self.vector_active = False
                 self._vector_retry_at = time.monotonic() + 30.0
                 self.last_sources = {"vector_error": 1}
@@ -266,11 +260,10 @@ class Retriever:
         return hits
 
     def _refusal_decision(self, query: str, hits: List[SearchHit]) -> Tuple[Optional[str], List[SearchHit]]:
-        """判断该不该拒答，返回（拒答原因, 最终结果）。不该拒答时原因为 None。
+        """判断该不该拒答，返回（原因, 最终结果）；不该拒答时原因为 None。
 
-        与是否真的清空结果解耦：评测需要「判定结果」和「检索结果」两个视角。
-        语义校验分三档：`need_more` 时扩大窗口二次检索，只有确实没有才拒答——
-        这是为了区分「资料里没有」和「这次没检索到」。
+        结果清不清空由调用方决定，评测要分别看判定结果和检索结果。
+        need_more 时扩大窗口二次检索，只有确实没有才拒答。
         """
         threshold = float(self.config.retrieval.refuse_threshold or 0.0)
         if threshold > 0 and (not hits or hits[0].score < threshold):
@@ -279,7 +272,7 @@ class Retriever:
         unseen_ratio = self.unseen_ratio(query)
         self.last_unseen_ratio = unseen_ratio
 
-        # 语义校验优先：词面信号已实测分不开可答/不可答，能上模型就别用数词。
+        # 语义校验优先；词面信号实测分不开可答和不可答
         if self.verifier is not None:
             verdict, _reason = self.verifier.verify_tiered(query, hits)
             if verdict == ANSWERABLE:
@@ -287,7 +280,7 @@ class Retriever:
             if verdict == CANNOT:
                 return "verifier_cannot", hits
 
-            # need_more：资料相关但可能没检索全，扩大窗口再检索一次
+            # need_more：资料相关但可能没检索全，扩大窗口再查一次
             retry_k = int(self.config.retrieval.verify_retry_top_k)
             if retry_k <= len(hits):
                 retry_k = len(hits) + 5
@@ -310,13 +303,11 @@ class Retriever:
         return None, hits
 
     def unseen_ratio(self, query: str) -> float:
-        """问题里的**实词**有多大比例在知识库里完全没出现过。
+        """问题里的实词有多大比例没在库里出现过。
 
-        两处降噪（相比早期版本直接对 `tokenize` 结果计数）：
-        1. 只统计实词——语气助词与虚词（吗/了/能/我…）与可答性无关，之前它们
-           把口语化问法的比例机械推到 0.8 以上，导致大量误拒；
-        2. bigram 降权（`unseen_bigram_weight`，默认 0.5）——二字词多数由字符滑窗
-           切出，噪声大于信息，等权计数会放大误判。
+        只统计实词：虚词和语气助词（吗/了/能/我）跟可答性无关，等权计数会把
+        口语化问法的比例推到 0.8 以上，造成大量误拒。
+        二字词按 unseen_bigram_weight（默认 0.5）降权，它们多是字符滑窗切出的噪声。
         """
         if self._bm25 is None:
             return 0.0
@@ -333,12 +324,11 @@ class Retriever:
                 unseen += weight
         return unseen / total if total else 0.0
 
-    # ==================== 短语召回（第三路） ====================
+    # 短语召回（第三路）
     def _phrase_search(self, query: str, top_k: int) -> List[tuple[str, float]]:
-        """只做精确子串匹配（别名/标准问法）。
+        """只做精确子串匹配（别名、标准问法）。
 
-        运营写的标准问法往往就是客户原话，这一路宁缺毋滥：
-        语义泛化交给 BM25 和向量，避免把覆盖率噪声带进融合。
+        这一路只用原文命中，语义泛化交给 BM25 和向量，避免把覆盖率噪声带进融合。
         """
         query_norm = normalize(query)
         if len(query_norm) < 2:
@@ -350,9 +340,8 @@ class Retriever:
                 scores.append((chunk.chunk_id, 2.0))
         return scores[:top_k]
 
-    # ==================== 上下文扩展 ====================
     def expand(self, hit: SearchHit, max_chars: int = 1200) -> str:
-        """子块命中后回填父块，兼顾召回精度和上下文完整。"""
+        """子块命中后回填父块，兼顾精度和上下文完整。"""
         if hit.chunk.parent_id:
             parent = self.storage.get_chunk(hit.chunk.parent_id)
             if parent is not None:

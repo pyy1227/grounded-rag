@@ -1,8 +1,6 @@
 """配置模型：TOML 文件 + 环境变量覆盖。
 
-设计原则：
-- 所有可调参数（切分、召回权重、阈值）都进配置，方便做消融实验；
-- 密钥只从环境变量读，不落配置文件。
+可调参数（切分、召回权重、阈值）都放配置里，方便做消融实验；密钥只从环境变量读。
 """
 from __future__ import annotations
 
@@ -28,14 +26,14 @@ class ChunkingConfig:
 
 @dataclass
 class EmbeddingConfig:
-    # hash = 离线确定性向量（仅用于跑通和测试）；remote = OpenAI 兼容 /embeddings
+    # hash：离线确定性向量，只用于跑通和测试；remote：OpenAI 兼容 /embeddings
     provider: str = "hash"
     url: str = "http://127.0.0.1:8081/v1/embeddings"
     model: str = "bge-large-zh-v1.5"
     api_key_env: str = "RAGAGENT_EMBEDDING_API_KEY"
     dim: int = 256
-    # 单次 /embeddings 请求的文本条数。DashScope text-embedding-v3 上限是 10，
-    # 超了会返回 400 InvalidParameter，所以默认取 10。
+    # 单次 /embeddings 请求的条数。DashScope text-embedding-v3 上限 10，
+    # 超了返回 400 InvalidParameter。
     batch_size: int = 10
     timeout: float = 10.0
 
@@ -59,29 +57,29 @@ class RetrievalConfig:
     bm25_weight: float = 0.5
     vector_weight: float = 0.5
     enable_vector: bool = True
-    # 向量相似度低于该值不参与融合（哈希向量噪声大时可调高）
+    # 向量相似度低于该值不进融合；哈希向量噪声大时可以调高
     vector_min_score: float = 0.0
-    # RRF 各源权重（默认等权；某一路噪声大时可调低）
+    # RRF 各路权重，默认等权；某一路噪声大就调低
     bm25_rank_weight: float = 1.0
     vector_rank_weight: float = 1.0
     phrase_rank_weight: float = 1.0
     enable_rerank: bool = True
     rerank_mode: str = "heuristic"  # heuristic | llm | noop
     rerank_top_k: int = 20
-    # 融合分低于该值直接拒答（阈值需按评测集校准）
+    # 融合分低于该值直接拒答，阈值按评测集校准
     refuse_threshold: float = 0.0
-    # 问题里「知识库没出现过的实词」占比超过该值时拒答；1.0 表示只有全部未见过才拒答
+    # 问题里没在库中出现过的实词占比超过该值就拒答；1.0 表示全部未见才拒答
     max_unseen_ratio: float = 1.0
-    # 拒答信号里二字词的权重。bigram 多为字符滑窗切出的噪声，默认降权到 0.5
+    # 二字词在拒答信号里的权重。bigram 多是字符滑窗切出的噪声，默认降权到 0.5
     unseen_bigram_weight: float = 0.5
-    # 拒答方式：llm = 用模型判断「仅凭检索到的段落能否回答」（有 Key 时生效）；
-    # off = 只用词面信号（离线模式）。词面信号已实测分不开可答/不可答，见 docs/eval-report-example.md
+    # llm：模型判断检索到的段落能否回答，需要 Key；off：只用词面信号（离线）。
+    # 词面信号实测分不开可答和不可答，见 docs/eval-report-example.md
     verify_mode: str = "llm"  # llm | off
-    # 给校验器看几条：实测 3 条会漏掉排在第 4 位的答案（可答问题被误拒），5 条更稳
+    # 校验器看前几条段落。3 条会漏掉排第 4 的答案（可答问题被误拒），默认 5
     verify_snippets: int = 5
-    # 判定为 need_more 时，扩大到这个窗口再检索一次
+    # need_more 时扩大到这个窗口再检索一次
     verify_retry_top_k: int = 10
-    # 生成后是否做答案接地校验（答案是否被引用段落支持），不支持就降级为摘录
+    # 生成后是否校验答案被引用段落支持；不支持就降级为摘录
     grounding_mode: str = "llm"  # llm | off
 
 
@@ -94,7 +92,7 @@ class AgentConfig:
 
 @dataclass
 class EvalConfig:
-    # 仓库里只带 dev/test 两份；默认用 dev（调参用），test 是留出集
+    # 仓库里只有 dev/test 两份；默认 dev 用来调参，test 是留出集
     dataset: str = "data/eval/queries-dev.jsonl"
     k_values: tuple[int, ...] = (3, 5)
 

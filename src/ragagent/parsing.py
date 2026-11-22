@@ -1,13 +1,9 @@
-"""文档解析：把不同格式统一成「标题 + 章节」结构。
+"""文档解析：把不同格式统一成标题加章节的结构。
 
-支持的格式：
-- .md / .txt：按 Markdown 标题切章节；识别表格行
-- .pdf：按页抽取文本（PyPDF2/pypdf）
-- .docx：按标题样式切章节，表格转 Markdown
-- .xlsx：每个 sheet 转一个 Markdown 表格
+.md / .txt 按 Markdown 标题切章节并识别表格行；.pdf 按页抽文本；.docx 按标题样式
+切章节、表格转 Markdown；.xlsx 每个 sheet 转一张 Markdown 表格。
 
-设计说明：解析层只负责「还原结构」，不做切分和清洗，
-这样切分策略可以独立迭代（见 chunking.py）。
+解析层只负责还原结构，不做切分和清洗，切分策略可以独立迭代（见 chunking.py）。
 """
 from __future__ import annotations
 

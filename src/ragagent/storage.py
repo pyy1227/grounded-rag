@@ -1,7 +1,7 @@
 """SQLite 存储层。
 
-为什么不用 SQLAlchemy：这个项目只有 5 张表、查询固定，裸 sqlite3 更透明，
-也少一层依赖。生产环境换成 PostgreSQL + pgvector 时，只需要替换本文件。
+不用 SQLAlchemy：只有 5 张表、查询固定，裸 sqlite3 更透明，也少一层依赖。
+换 PostgreSQL + pgvector 时只需要改这个文件。
 """
 from __future__ import annotations
 
@@ -87,7 +87,7 @@ class Storage:
         finally:
             conn.close()
 
-    # ==================== 文档 ====================
+    # 文档
     def upsert_document(self, record: DocumentRecord) -> None:
         with self.conn() as conn:
             conn.execute(
@@ -137,7 +137,7 @@ class Storage:
             version=row["version"], chunk_count=row["chunk_count"],
         )
 
-    # ==================== Chunk ====================
+    # Chunk
     def replace_chunks(self, doc_id: str, chunks: Iterable[Chunk]) -> int:
         """整篇替换：先删旧 chunk/embedding，再写入。"""
         chunks = list(chunks)
@@ -163,9 +163,9 @@ class Storage:
         vectors: Dict[str, np.ndarray],
         documents: Iterable[DocumentRecord],
     ) -> int:
-        """批量整篇替换：外部评测集入库用，一个连接内完成，避免几千次开关库。
+        """外部评测集入库用，一个连接内做完，避免几千次开关库。
 
-        与 replace_chunks 语义一致（先按 doc_id 删旧再写新），只是去掉了逐篇开销。
+        语义和 replace_chunks 一致：先按 doc_id 删旧，再写新；这里只是省掉逐篇开销。
         """
         chunks = list(chunks)
         documents = list(documents)
@@ -250,7 +250,7 @@ class Storage:
             meta=json.loads(row["meta_json"] or "{}"),
         )
 
-    # ==================== 向量 ====================
+    # 向量
     def save_embeddings(self, model: str, vectors: Dict[str, np.ndarray]) -> None:
         if not vectors:
             return
@@ -275,7 +275,7 @@ class Storage:
         return result
 
     def count_embeddings(self, model: Optional[str] = None) -> int:
-        """向量条数。传 model 时只数该模型——用来发现「配置了向量但库里没有」的状态。"""
+        """向量条数。传 model 时只数该模型，用来发现配了向量但库里没有的情况。"""
         sql = "SELECT COUNT(*) AS n FROM embeddings"
         params: tuple = ()
         if model is not None:
@@ -291,7 +291,7 @@ class Storage:
             ).fetchall()
         return {row["model"]: int(row["n"]) for row in rows}
 
-    # ==================== meta / 评测 ====================
+    # meta 和评测
     def set_meta(self, key: str, value: str) -> None:
         with self.conn() as conn:
             conn.execute(

@@ -1,12 +1,12 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-    rag-agent 一键演示脚本：按顺序跑完「索引 → 入库 → 检索 → 回答 → 拒答 → Agent → 评测」。
+    rag-agent 演示脚本：按顺序跑索引、入库、检索、回答、拒答、Agent、评测。
 
 .DESCRIPTION
-    每一步都会先打印要执行的命令，再执行，方便现场边看边讲。
-    默认使用 config.toml（DeepSeek + DashScope，需要 .env 里的 key）。
-    加 -Offline 则使用 config.offline.toml（哈希向量 + 规则替身，零 Key、不联网）。
+    每一步先打印要执行的命令再执行，方便现场边看边讲。
+    默认用 config.toml（DeepSeek + DashScope，需要 .env 里的 key）。
+    加 -Offline 改用 config.offline.toml（哈希向量 + 规则替身，零 Key、不联网）。
 
 .EXAMPLE
     # 完整体验（真实模型）

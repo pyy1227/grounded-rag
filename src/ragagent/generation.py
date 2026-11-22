@@ -1,11 +1,9 @@
-"""答案生成：强制基于检索结果，带引用校验与拒答。
+"""答案生成：基于检索结果，带引用校验和拒答。
 
-两种模式：
-- llm：调用模型，prompt 约束「只依据资料、必须引用、不足则拒答」；
-- extractive：无模型时直接摘录 Top-1 片段（不产生幻觉，但也不自然）。
+llm 模式调模型，prompt 约束只依据资料、必须引用、资料不足就拒答；
+extractive 模式无模型时直接摘录 Top-1 片段，不产生幻觉，但读起来不自然。
 
-引用校验：只接受指向真实 chunk 的 [n]，越界编号直接丢弃，
-避免模型编造引用。
+引用校验只接受指向真实 chunk 的 [n]，越界编号直接丢掉，防止模型编造引用。
 """
 from __future__ import annotations
 
@@ -42,7 +40,7 @@ class AnswerGenerator:
         self.config = config
         self.retriever = retriever or Retriever(storage, config)
         self.chat = chat or build_chat(config)
-        # 接地校验：有 Key 才启用（离线没有模型，无从校验）
+        # 接地校验：有 Key 才启用，离线没有模型可用
         self.grounding = None
         if config.retrieval.grounding_mode == "llm" and config.llm_api_key():
             self.grounding = build_grounding(self.chat)
@@ -68,7 +66,6 @@ class AnswerGenerator:
         result.latency_ms = int((time.perf_counter() - started) * 1000)
         return result
 
-    # ==================== 内部 ====================
     def _mode(self) -> str:
         return "extractive" if isinstance(self.chat, DemoChat) else "llm"
 
@@ -111,7 +108,7 @@ class AnswerGenerator:
             result = self.chat.chat(messages, tools=None, temperature=0.0)
             text = (result.content or "").strip()
         except Exception:
-            # 模型失败不代表没有答案：用已经检索到的 hits 做摘录，而不是只回一句错误提示
+            # 模型失败不代表没有答案，用已检索到的 hits 做摘录
             return self._extractive_answer(
                 hits or [], citations, note="模型调用失败，已降级为摘录"
             )
@@ -126,7 +123,7 @@ class AnswerGenerator:
             if 1 <= int(match) <= len(citations)
         }
         if not used:
-            # 没引用说明可能没按资料回答，按拒答处理更安全
+            # 没引用说明可能没按资料回答，按拒答处理
             return Answer(text=REFUSE_TEXT, refused=True, mode="llm")
 
         used_citations = [c for c in citations if c.index in used]

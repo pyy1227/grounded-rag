@@ -1,8 +1,7 @@
 """LLM 客户端。
 
-- OpenAIChat：调用 OpenAI 兼容的 /chat/completions，支持 function calling；
-- DemoChat：无 API 时的规则型替身，用来演示/测试 Agent 链路。
-
+OpenAIChat 调 OpenAI 兼容的 /chat/completions，支持 function calling。
+DemoChat 是无 API 时的规则型替身，用来演示和测试 Agent 链路。
 两者实现同一个 Protocol，Agent 层不需要知道用的是哪个。
 """
 from __future__ import annotations
@@ -105,8 +104,8 @@ class OpenAIChat:
 class DemoChat:
     """无 API Key 时的规则型替身。
 
-    行为：第一次调用检索，第二次把 Top-1 结果整理成 submit_answer。
-    它不理解语义，只用来证明「工具链路 + 引用」是通的。
+    第一次调用返回一次检索，第二次把 Top-1 结果整理成 submit_answer。
+    它不理解语义，只用来验证工具链路和引用是通的。
     """
 
     name = "demo:rule-based"

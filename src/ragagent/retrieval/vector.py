@@ -1,7 +1,7 @@
 """向量检索：内存矩阵 + 余弦相似度。
 
-数据量到十万级时应换 pgvector / Qdrant，这里的接口保持
-`search(query_vector, top_k) -> [(chunk_id, score)]`，替换实现不影响上层。
+到十万级 chunk 应换 pgvector / Qdrant；对外接口保持
+search(query_vector, top_k) -> [(chunk_id, score)]，换实现不影响上层。
 """
 from __future__ import annotations
 

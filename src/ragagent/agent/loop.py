@@ -1,7 +1,7 @@
 """Agent 主循环。
 
-流程：模型决策 → 调用工具 → 结果回灌 → 直到 submit_answer 或步数用尽。
-所有动作都记入 trace，便于回放和定位「为什么答错」。
+模型决策、调用工具、结果回灌，直到 submit_answer 或步数用尽。
+所有动作记入 trace，便于回放和定位答错的那一步。
 """
 from __future__ import annotations
 
@@ -45,7 +45,7 @@ class AgentRunner:
         self.registry = ToolRegistry()
         self.max_steps = max(1, int(config.agent.max_steps))
         self.require_citation = bool(config.agent.require_citation)
-        # 和 /chat 共用同一层接地校验：Agent 的答案也要能被引用段落支持
+        # 和 /chat 共用同一层接地校验：Agent 的答案也要有引用段落支持
         self.grounding = grounding
         if self.grounding is None and config.retrieval.grounding_mode == "llm" and config.llm_api_key():
             self.grounding = build_grounding(self.chat)
@@ -126,7 +126,6 @@ class AgentRunner:
         answer.trace = ctx.trace
         return answer
 
-    # ==================== 收尾 ====================
     def _finalize(self, ctx: AgentContext, final_text: str, started: float) -> Answer:
         latency = int((time.perf_counter() - started) * 1000)
 

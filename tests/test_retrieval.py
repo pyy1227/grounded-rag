@@ -29,7 +29,7 @@ def test_content_tokens_drop_particles_and_cross_word_bigrams():
     assert "吗" not in tokens and "能" not in tokens
     assert "机舱" in tokens
 
-    # 「拆都没拆」直接滑窗会切出 拆都/都没；滤掉虚词后只保留相邻的 没拆
+    # 拆都没拆 直接滑窗会切出 拆都/都没；滤掉虚词后只保留相邻的 没拆
     tokens = content_tokens("拆都没拆")
     assert "没拆" in tokens
     assert "拆都" not in tokens
@@ -64,7 +64,7 @@ def test_verifier_decides_refusal_when_available(temp_env):
 
 
 def test_need_more_triggers_second_retrieval(temp_env):
-    """判定 need_more 时应扩大窗口重试，而不是直接拒答。"""
+    """判定 need_more 时应扩大窗口重试，不直接拒答。"""
     config, storage = temp_env
     retriever = Retriever(storage, config)
     retriever._ensure_index()
@@ -77,7 +77,7 @@ def test_need_more_triggers_second_retrieval(temp_env):
 
         def verify_tiered(self, query, hits):
             calls["n"] += 1
-            # 第一次说"还需要资料"，重试后说"能答"——验证二次检索路径
+            # 第一次说还需要资料，重试后说能答，用来验证二次检索路径
             if calls["n"] == 1:
                 return "need_more", "缺关键信息"
             return "answerable", "够了"
@@ -123,7 +123,7 @@ def test_parent_expansion_returns_section_text(temp_env):
 
 
 def test_ingest_records_bulk_for_external_corpus(temp_env):
-    """外部评测集走「一条记录 = 一个 chunk」的旁路：不解析、不切分。"""
+    """外部评测集走一条记录一个 chunk 的旁路，不解析、不切分。"""
     config, storage = temp_env
     indexer = Indexer(storage, config)
     records = [

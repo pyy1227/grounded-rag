@@ -8,7 +8,7 @@ parent_max_chars = 1600
 min_chars = 40
 
 [embedding]
-# hash = 离线确定性向量（不需要任何服务）；remote = OpenAI 兼容 /embeddings
+# hash：离线确定性向量，不需要外部服务；remote：OpenAI 兼容 /embeddings
 provider = "remote"
 url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
 model = "text-embedding-v3"

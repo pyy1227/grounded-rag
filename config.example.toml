@@ -10,8 +10,8 @@ parent_max_chars = 1600
 min_chars = 40
 
 [embedding]
-# hash   = 离线确定性向量（无需外部服务，跑通/测试用）
-# remote = OpenAI 兼容 /embeddings（下面是阿里云百炼 DashScope 兼容模式）
+# hash：离线确定性向量，不需要外部服务，跑通和测试用
+# remote：OpenAI 兼容 /embeddings，下面是阿里云百炼 DashScope 兼容模式
 provider = "remote"
 url = "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings"
 model = "text-embedding-v3"
@@ -53,7 +53,7 @@ rerank_top_k = 20
 refuse_threshold = 0.0    # 用 `ragagent eval` 的阈值扫描校准
 max_unseen_ratio = 0.8    # 实词未见比例阈值，越小越容易拒答（1.0 表示只拒答全未见）
 unseen_bigram_weight = 0.5  # 拒答信号里二字词的权重（bigram 多为噪声，默认降权）
-verify_mode = "llm"       # llm = 模型判断「资料够不够」；off = 只用词面信号（离线）
+verify_mode = "llm"       # llm 用模型判断资料够不够；off 只用词面信号（离线）
 verify_snippets = 5       # 校验器看前几条片段（3 条会漏掉排在第 4 位的答案）
 verify_retry_top_k = 10   # need_more 时扩大到的检索窗口
 grounding_mode = "llm"    # 生成后再校验答案是否被引用段落支持；off = 关闭

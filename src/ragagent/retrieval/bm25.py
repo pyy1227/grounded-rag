@@ -1,7 +1,6 @@
-"""BM25 检索（自写实现，不引 rank_bm25）。
+"""BM25 检索，自己实现，不引 rank_bm25。
 
-为什么自己写：需要可控的分词、可解释的分数，以及后续做「字段加权」
-（section 标题的权重和正文不同）。
+自己写是为了分词可控、分数可解释，后面也方便做字段加权（section 标题和正文权重不同）。
 """
 from __future__ import annotations
 
@@ -34,7 +33,7 @@ class BM25Index:
 
     def _build(self) -> None:
         for chunk in self.chunks:
-            # chunk.text 已包含「（章节：...）」前缀，标题词天然参与打分，不再单独加权
+            # chunk.text 已带（章节：...）前缀，标题词自然参与打分，不再单独加权
             counts = Counter(tokenize(chunk.text))
             self._term_freqs.append(counts)
             self._lengths.append(max(1, sum(counts.values())))

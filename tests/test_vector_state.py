@@ -1,7 +1,7 @@
-"""向量状态可见性测试：配置开了向量 ≠ 库里真的有向量。
+"""向量状态可见性测试：配置开了向量，不等于库里真有向量。
 
-这条静默降级以前没有任何信号：`vector` 分数一律 0、`reasons` 里没有 vector#，
-但接口照常返回。现在要求至少三处能看出来：Retriever.vector_active、日志告警、/health。
+以前静默降级时没有任何信号：vector 分数一律 0、reasons 里没有 vector#，接口照常返回。
+现在要求三处能看出来：Retriever.vector_active、日志告警、/health。
 """
 from __future__ import annotations
 
