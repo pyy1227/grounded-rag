@@ -221,7 +221,6 @@ powershell -ExecutionPolicy Bypass -File scripts\demo.ps1 -Pause
 ```
 
 脚本按七幕顺序跑：索引现状 → 入库幂等 → 检索四层分数 → 带引用回答 → 拒答 → Agent trace → 评测报告。
-每一幕的预期输出和讲解词见 [docs/demo.md](docs/demo.md)。
 
 ## 网页界面
 
