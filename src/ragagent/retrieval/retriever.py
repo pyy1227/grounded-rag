@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from ..config import AppConfig
 from ..embedding import Embedder, build_embedder
@@ -10,7 +10,7 @@ from ..llm import ChatModel, build_chat
 from ..models import Chunk, SearchHit
 from ..storage import Storage
 from ..tokenization import content_tokens, normalize, tokenize
-from ..verify import build_verifier
+from ..verify import ANSWERABLE, CANNOT, build_verifier
 from .bm25 import BM25Index
 from .fusion import rrf_fuse, weighted_fuse
 from .rerank import Reranker, build_reranker
@@ -120,6 +120,34 @@ class Retriever:
         if not query:
             return []
 
+        hits = self._retrieve(query, top_k, candidate_k, use_vector, use_rerank)
+        if not hits:
+            self.last_refused = True
+            self.last_refusal_reason = "no_candidates"
+            self.last_unseen_ratio = self.unseen_ratio(query)
+            return []
+
+        reason, hits = self._refusal_decision(query, hits)
+        self.last_refused = reason is not None
+        self.last_refusal_reason = reason
+        if reason and apply_refusal:
+            self.last_sources["refused_by"] = reason
+            return []
+        return hits
+
+    def _retrieve(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        candidate_k: Optional[int] = None,
+        use_vector: Optional[bool] = None,
+        use_rerank: Optional[bool] = None,
+    ) -> List[SearchHit]:
+        """纯检索：三路召回 → 融合 → 精排，不做拒答判断。
+
+        和 `search` 拆开是为了让拒答判定能**二次检索**（判定 need_more 时扩大窗口重试），
+        同时保证评测可以直接拿纯检索结果算 recall。
+        """
         self._ensure_index()
         if not self._chunks:
             return []
@@ -178,9 +206,6 @@ class Retriever:
             )
 
         if not fused:
-            self.last_refused = True
-            self.last_refusal_reason = "no_candidates"
-            self.last_unseen_ratio = self.unseen_ratio(query)
             return []
 
         bm25_score = {hit.chunk.chunk_id: hit.score for hit in bm25_hits}
@@ -219,37 +244,51 @@ class Retriever:
             for hit in hits:
                 hit.score = hit.fused_score
 
-        reason = self._refusal_decision(query, hits)
-        self.last_refused = reason is not None
-        self.last_refusal_reason = reason
-        if reason and apply_refusal:
-            self.last_sources["refused_by"] = reason
-            return []
         return hits
 
-    def _refusal_decision(self, query: str, hits: List[SearchHit]) -> Optional[str]:
-        """判断该不该拒答，返回拒答原因（不该拒答返回 None）。
+    def _refusal_decision(self, query: str, hits: List[SearchHit]) -> Tuple[Optional[str], List[SearchHit]]:
+        """判断该不该拒答，返回（拒答原因, 最终结果）。不该拒答时原因为 None。
 
         与是否真的清空结果解耦：评测需要「判定结果」和「检索结果」两个视角。
+        语义校验分三档：`need_more` 时扩大窗口二次检索，只有确实没有才拒答——
+        这是为了区分「资料里没有」和「这次没检索到」。
         """
         threshold = float(self.config.retrieval.refuse_threshold or 0.0)
         if threshold > 0 and (not hits or hits[0].score < threshold):
-            return "score_threshold"
+            return "score_threshold", hits
 
         unseen_ratio = self.unseen_ratio(query)
         self.last_unseen_ratio = unseen_ratio
 
         # 语义校验优先：词面信号已实测分不开可答/不可答，能上模型就别用数词。
         if self.verifier is not None:
-            answerable, _reason = self.verifier.verify(query, hits)
-            return None if answerable else "verifier"
+            verdict, _reason = self.verifier.verify_tiered(query, hits)
+            if verdict == ANSWERABLE:
+                return None, hits
+            if verdict == CANNOT:
+                return "verifier_cannot", hits
+
+            # need_more：资料相关但可能没检索全，扩大窗口再检索一次
+            retry_k = int(self.config.retrieval.verify_retry_top_k)
+            if retry_k <= len(hits):
+                retry_k = len(hits) + 5
+            wider = self._retrieve(query, top_k=retry_k)
+            if wider and len(wider) > len(hits):
+                verdict, _reason = self.verifier.verify_tiered(query, wider)
+                if verdict == ANSWERABLE:
+                    self.last_sources["retried"] = 1
+                    return None, wider
+                if verdict == CANNOT:
+                    return "verifier_cannot", wider
+            self.last_sources["retried"] = 1
+            return "verifier_need_more", wider or hits
 
         max_unseen = float(self.config.retrieval.max_unseen_ratio)
         if max_unseen < 1.0 and unseen_ratio >= max_unseen:
-            return "unseen_ratio"
+            return "unseen_ratio", hits
         if max_unseen >= 1.0 and unseen_ratio >= 1.0:
-            return "all_terms_unseen"
-        return None
+            return "all_terms_unseen", hits
+        return None, hits
 
     def unseen_ratio(self, query: str) -> float:
         """问题里的**实词**有多大比例在知识库里完全没出现过。

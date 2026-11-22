@@ -79,6 +79,10 @@ class RetrievalConfig:
     verify_mode: str = "llm"  # llm | off
     # 给校验器看几条：实测 3 条会漏掉排在第 4 位的答案（可答问题被误拒），5 条更稳
     verify_snippets: int = 5
+    # 判定为 need_more 时，扩大到这个窗口再检索一次
+    verify_retry_top_k: int = 10
+    # 生成后是否做答案接地校验（答案是否被引用段落支持），不支持就降级为摘录
+    grounding_mode: str = "llm"  # llm | off
 
 
 @dataclass
