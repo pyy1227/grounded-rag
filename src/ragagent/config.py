@@ -77,7 +77,8 @@ class RetrievalConfig:
     # 拒答方式：llm = 用模型判断「仅凭检索到的段落能否回答」（有 Key 时生效）；
     # off = 只用词面信号（离线模式）。词面信号已实测分不开可答/不可答，见 docs/eval-report-example.md
     verify_mode: str = "llm"  # llm | off
-    verify_snippets: int = 3
+    # 给校验器看几条：实测 3 条会漏掉排在第 4 位的答案（可答问题被误拒），5 条更稳
+    verify_snippets: int = 5
 
 
 @dataclass
