@@ -30,11 +30,46 @@
                      └─────────────────────────────────┘
 ```
 
+## 前置条件
+
+| 项 | 要求 | 说明 |
+| --- | --- | --- |
+| Python | **3.11 或更高** | `pyproject.toml` 要求 `>=3.11`；CI 覆盖 3.11 / 3.12 |
+| 依赖管理 | `uv`（推荐）或 `pip` | uv 按 `uv.lock` 精确复现；pip 用仓库根目录的 `requirements.txt`（已锁定版本） |
+| 模型 Key | **可以没有** | 在线配置需要 `DEEPSEEK_API_KEY` + `DASHSCOPE_API_KEY`；没有 Key 就用 `config.offline.toml`，全流程离线可跑 |
+| 网络 | 可选 | 在线配置需能访问 `api.deepseek.com`、`dashscope.aliyuncs.com`；离线配置不联网 |
+| 操作系统 | Windows / Linux / macOS | 演示脚本是 PowerShell（Windows 自带 5.1+），其余功能跨平台 |
+| 中文分词 | 可选 | 默认字符 bigram；装 jieba 并设 `RAGAGENT_TOKENIZER=jieba` 才切换成词典分词 |
+
+装依赖，三选一：
+
+```bash
+# 1) uv（推荐）：按 uv.lock 复现
+uv sync --extra dev
+
+# 2) pip + requirements.txt：版本全部锁定，适合没装 uv 的机器
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+pip install -e .                   # 装项目本身，得到 ragagent 命令
+
+# 3) 只装项目：依赖交给 pyproject 解析，版本不锁
+pip install -e ".[dev]"
+```
+
+装完执行 `ragagent --help`，应能列出 `ingest / search / ask / agent / eval / stats / ingest-jsonl / serve` 8 个子命令。
+
+可选的中文分词（`requirements.txt` 里已经包含 jieba，这里只是切换统计方式）：
+
+```bash
+export RAGAGENT_TOKENIZER=jieba    # Windows: $env:RAGAGENT_TOKENIZER="jieba"
+```
+
 ## 快速开始
 
 ```bash
 cd rag-agent
-uv sync                      # 或 pip install -e ".[dev]"
+uv sync --extra dev          # pip 路线见上「前置条件」
 
 # 仓库带两份配置：
 #   config.toml         → DeepSeek(对话) + DashScope(向量)，需要 .env 里的 key
@@ -66,6 +101,117 @@ ragagent serve --port 8000
 ragagent --config config.offline.toml ingest data/docs
 ragagent --config config.offline.toml ask "退货运费谁承担"   # mode=extractive
 ```
+
+## 文档入库
+
+检索和问答都建立在索引之上，所以第一步必须把文档写进数据库。索引是 SQLite 单文件，
+位置由 `storage.path` 指定（默认 `data/rag.db`）。
+
+### 支持的格式
+
+| 扩展名 | 解析方式 |
+| --- | --- |
+| `.md` / `.markdown` / `.txt` | 按 Markdown 标题切章节，识别表格行 |
+| `.pdf` | 按页抽取文本 |
+| `.docx` | 按标题样式切章节，表格转 Markdown |
+| `.xlsx` | 每个 sheet 转一张 Markdown 表格 |
+
+其他扩展名不会被静默忽略：会作为失败项写进 `errors`。
+
+### 命令
+
+```bash
+# 目录（递归子目录）；不写路径时默认就是 data/docs
+ragagent ingest data/docs
+
+# 单个文件也接受
+ragagent ingest data/docs/售后政策.md
+
+# 强制重建，见下文「什么时候必须 --force」
+ragagent ingest data/docs --force
+
+# 没有 Key 时用离线配置（哈希向量，不联网）
+ragagent --config config.offline.toml ingest data/docs
+
+# 写一份独立索引，不动 data/rag.db
+ragagent --db data/other.db ingest ./my_docs
+```
+
+实测输出（15 篇 demo 文档、离线配置）：
+
+```json
+{
+  "added": ["data\\docs\\优惠券与促销.md", "…"],
+  "updated": [],
+  "skipped": [],
+  "errors": [],
+  "chunks": 121,
+  "elapsed_ms": 1298,
+  "stats": {
+    "documents": 15,
+    "attempted": 15,
+    "errors": 0,
+    "children": 121,
+    "kinds": {"total": 121, "faq": 62, "table": 19, "avg_chars": 1503},
+    "embedder": "hash-256-bigram",
+    "tokenizer": "bigram"
+  }
+}
+```
+
+`documents` 只数**成功**的篇数，解析失败的文件只出现在 `errors` 里；只要有失败，CLI 退出码就是 1（HTTP 侧返回 422）。
+
+### 入库做了什么
+
+1. **解析**：按扩展名取出「章节 + 段落 + 表格」结构，不是整篇塞进一个块；
+2. **切分**：标题 / FAQ 问答 / 表格行切成父子块——子块（`chunking.max_chars`，默认 520）进索引保证召回精度，父块（`parent_max_chars`，默认 1600）留给回答补上下文；
+3. **幂等**：按文件内容 sha256 判断。内容没变 → `skipped`，不会重复调用 embedding 计费；内容变了 → `updated`，先删该文档的旧 chunk 再写新的；
+4. **向量化**：按 `embedding.batch_size`（默认 10，DashScope text-embedding-v3 的单次上限）分批请求。这一步失败不会写半截数据：该文件整体进 `errors`，索引保持入库前的状态；
+5. **写库**：chunk、向量、文档元数据写进 SQLite，`chunks` 就等于 `stats.children`。
+
+### 验证入库结果
+
+```bash
+ragagent stats                          # documents / chunks / vector_active / vectors_loaded
+ragagent search "退货运费谁承担" -k 5    # 能召回就说明索引可用
+```
+
+看两个数就够：`chunks > 0` 表示文档进库了；`vector_active = true` 表示向量也生效了。
+只看 `embedder` 名字不算数——配置写了 `enable_vector = true`、库里却没有向量时，
+检索会静默降级成 BM25 + 短语（`stats` 里 `vectors_loaded` 会是 0）。
+
+### 什么时候必须 `--force`
+
+下面这些改动会让库里的旧向量和新配置不在同一个空间，不加 `--force` 会命中旧 chunk：
+看着「有结果」，语义其实是错的。
+
+- 换 embedding 模型（`embedding.provider` / `embedding.model`）；
+- 换分词器（`RAGAGENT_TOKENIZER` 在 jieba / bigram 之间切换）；
+- 调切分参数（`chunking.*`）。
+
+等价做法是删掉 `data/rag.db` 再完整 ingest 一次。
+
+### 批量导入外部语料（一条记录 = 一个 chunk）
+
+公开评测集（如 C-MTEB）本身就是 query-passage 对，不需要再解析切分，走旁路命令：
+
+```bash
+ragagent --config config.offline.toml --db data/external/T2Reranking/hash.db ingest-jsonl data/external/T2Reranking/passages.jsonl
+```
+
+每行一个 JSON：`{"doc_id": "...", "title": "...", "text": "..."}`，其中 `doc_id` 和 `text` 必填。
+
+### 通过 HTTP 入库
+
+`ragagent serve` 起来后也能触发：
+
+```bash
+curl -X POST http://127.0.0.1:8000/ingest \
+     -H "Content-Type: application/json" \
+     -d '{"path": "data/docs"}'
+```
+
+路径必须落在 `RAGAGENT_INGEST_ROOT`（默认 `data/docs`）内，越界返回 400，路径不存在返回 404。
 
 ## 演示
 
@@ -301,6 +447,7 @@ rag-agent/
 │   └── static/index.html # 网页（单文件原生 JS，无构建）
 ├── data/docs/            # demo 文档（15 篇）
 ├── data/eval/            # 内部评测集（queries-dev / queries-test）
+├── requirements.txt      # pip 依赖清单（版本锁定，见「前置条件」）
 ├── docs/eval-report-example.md  # 内部评测报告示例
 ├── docs/external-eval.md        # 外部数据集验证（C-MTEB）
 ├── scripts/prepare_cmteb.py     # 外部评测集预处理
