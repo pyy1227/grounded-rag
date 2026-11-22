@@ -45,3 +45,23 @@ def test_parent_expansion_returns_section_text(temp_env):
     if child is None:
         return
     assert len(retriever.expand(child)) >= len(child.chunk.text)
+
+
+def test_ingest_records_bulk_for_external_corpus(temp_env):
+    """外部评测集走「一条记录 = 一个 chunk」的旁路：不解析、不切分。"""
+    config, storage = temp_env
+    indexer = Indexer(storage, config)
+    records = [
+        {"doc_id": "p0", "title": "passage", "text": "充电时间约 2.5 小时，支持 5V/2A 输入。"},
+        {"doc_id": "p1", "title": "passage", "text": "风扇有三档风力，最大风速 4.2 m/s。"},
+    ]
+    report = indexer.ingest_records(records)
+
+    assert report["chunks"] == 2
+    doc = storage.get_document("p0")
+    assert doc is not None and doc.chunk_count == 1
+    assert storage.count_chunks("p0") == 1
+    assert storage.count_embeddings(indexer.embedder.model) >= 2
+
+    hits = Retriever(storage, config).search("充电要多久", top_k=3)
+    assert hits and hits[0].chunk.doc_id == "p0"

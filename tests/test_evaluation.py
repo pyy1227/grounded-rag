@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from ragagent.config import AppConfig
-from ragagent.evaluation import evaluate, load_dataset, sweep_thresholds
+from ragagent.evaluation import _match, evaluate, load_dataset, sweep_thresholds
 from ragagent.models import Chunk, EvalCase, SearchHit
 
 
@@ -68,6 +68,17 @@ def test_dataset_loader(workdir):
     assert len(cases) == 2
     assert cases[0].gold == ["d::s"]
     assert cases[1].answerable is False
+
+
+def test_gold_only_matches_section_path_not_body():
+    """gold 只认章节名：正文里顺带提一句不算命中（否则指标会虚高）。"""
+    body_only = _hit("售后政策", "常见问题", text="退货运费谁承担？具体见退货运费表格。")
+    assert _match(body_only, "售后政策::退货运费") is False
+    assert _match(body_only, "售后政策::常见问题") is True
+    # doc_id 对不上时，即使章节名相同也不算
+    assert _match(_hit("发货与物流", "常见问题"), "售后政策::常见问题") is False
+    # 空 keyword 表示只比文档
+    assert _match(_hit("售后政策", "任意章节"), "售后政策::") is True
 
 
 def test_sweep_restores_config():
