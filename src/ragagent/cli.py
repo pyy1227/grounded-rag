@@ -1,0 +1,199 @@
+"""命令行入口：ingest / search / ask / agent / eval / serve / stats。"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any, List, Optional
+
+from dotenv import load_dotenv
+
+from .config import AppConfig
+
+# 读取项目根目录的 .env（已存在的环境变量优先，不会被覆盖）
+load_dotenv()
+
+
+def _print(payload: Any) -> None:
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _build(config: AppConfig):
+    from .storage import Storage
+
+    storage = Storage(config.storage.path)
+    return storage
+
+
+def cmd_ingest(args: argparse.Namespace) -> int:
+    from .indexer import Indexer
+
+    config = AppConfig.load(args.config)
+    storage = _build(config)
+    indexer = Indexer(storage, config)
+    report = indexer.ingest_path(args.path, force=args.force)
+    _print(report)
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    from .retrieval.retriever import Retriever
+
+    config = AppConfig.load(args.config)
+    storage = _build(config)
+    hits = Retriever(storage, config).search(args.query, top_k=args.top_k)
+    _print({"query": args.query, "hits": [hit.to_dict() for hit in hits]})
+    return 0
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    from .generation import AnswerGenerator
+
+    config = AppConfig.load(args.config)
+    storage = _build(config)
+    answer = AnswerGenerator(storage, config).answer(args.query, top_k=args.top_k)
+    _print(answer.to_dict())
+    return 0
+
+
+def cmd_agent(args: argparse.Namespace) -> int:
+    from .agent.loop import AgentRunner
+
+    config = AppConfig.load(args.config)
+    storage = _build(config)
+    answer = AgentRunner(storage, config).run(args.query)
+    _print(answer.to_dict())
+    return 0
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    from .evaluation import evaluate, load_dataset, sweep_thresholds, write_report
+    from .retrieval.retriever import Retriever
+
+    config = AppConfig.load(args.config)
+    if args.threshold is not None:
+        config.retrieval.refuse_threshold = args.threshold
+    storage = _build(config)
+    dataset = args.dataset or config.evaluation.dataset
+    if not Path(dataset).exists():
+        print(f"评测集不存在: {dataset}", file=sys.stderr)
+        return 1
+
+    cases = load_dataset(dataset)
+    retriever = Retriever(storage, config)
+    result = evaluate(
+        retriever,
+        cases,
+        k_values=config.evaluation.k_values,
+        dataset=dataset,
+    )
+    extra: dict = {}
+    if not args.no_sweep:
+        extra["sweep"] = sweep_thresholds(retriever, cases)
+    report_path = write_report(result, args.report, extra)
+
+    storage.save_eval_run(
+        run_id=f"{Path(dataset).stem}-{result['metrics']['generated_at']}",
+        dataset=dataset,
+        config_json=result["config"],
+        metrics=result["metrics"],
+        report_path=report_path,
+    )
+    summary = {**result["metrics"], "report": report_path}
+    if extra.get("sweep"):
+        summary["sweep"] = extra["sweep"]
+    _print(summary)
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    from .retrieval.retriever import Retriever
+    from .tokenization import mode as tokenizer_mode
+
+    config = AppConfig.load(args.config)
+    storage = _build(config)
+    model = Retriever(storage, config).embedder.model
+    vectors = storage.count_embeddings(model)
+    _print(
+        {
+            "documents": len(storage.list_documents()),
+            "chunks": storage.count_chunks(),
+            "embedder": config.embedding.provider,
+            "embedding_model": model,
+            "vector_enabled": config.retrieval.enable_vector,
+            # 配置开了向量、库里却没有对应向量时这里是 false
+            "vector_active": vectors > 0,
+            "vectors": vectors,
+            "vector_models_in_db": storage.list_embedding_models(),
+            "tokenizer": tokenizer_mode(),
+            "db": config.storage.path,
+            "last_ingest": storage.get_meta("last_ingest_at"),
+        }
+    )
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    if args.config:
+        import os
+
+        os.environ["RAGAGENT_CONFIG"] = args.config
+    uvicorn.run("ragagent.api:app", host=args.host, port=args.port, reload=False)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ragagent", description="可评测的 RAG 知识助手")
+    parser.add_argument("--config", default="config.toml", help="配置文件路径")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    ingest = sub.add_parser("ingest", help="导入文档")
+    ingest.add_argument("path", nargs="?", default="data/docs")
+    ingest.add_argument("--force", action="store_true", help="忽略 sha256 缓存强制重建")
+    ingest.set_defaults(func=cmd_ingest)
+
+    search = sub.add_parser("search", help="只检索，不生成")
+    search.add_argument("query")
+    search.add_argument("-k", "--top-k", type=int, default=5)
+    search.set_defaults(func=cmd_search)
+
+    ask = sub.add_parser("ask", help="RAG 回答")
+    ask.add_argument("query")
+    ask.add_argument("-k", "--top-k", type=int, default=5)
+    ask.set_defaults(func=cmd_ask)
+
+    agent = sub.add_parser("agent", help="Agent 多步回答")
+    agent.add_argument("query")
+    agent.set_defaults(func=cmd_agent)
+
+    eval_cmd = sub.add_parser("eval", help="跑评测")
+    eval_cmd.add_argument("--dataset", default=None)
+    eval_cmd.add_argument("--report", default="reports/eval.md")
+    eval_cmd.add_argument("--threshold", type=float, default=None)
+    eval_cmd.add_argument("--no-sweep", action="store_true")
+    eval_cmd.set_defaults(func=cmd_eval)
+
+    stats = sub.add_parser("stats", help="索引统计")
+    stats.set_defaults(func=cmd_stats)
+
+    serve = sub.add_parser("serve", help="启动 HTTP 服务")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.set_defaults(func=cmd_serve)
+
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    return int(args.func(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

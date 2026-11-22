@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>企业知识库 RAG 助手</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-size='15' font-family='sans-serif' font-weight='700' fill='white' text-anchor='middle'%3ER%3C/text%3E%3C/svg%3E" />
+<style>
+  :root {
+    --bg: #f5f5f5;
+    --panel: #ffffff;
+    --border: #d9d9d9;
+    --line: #f0f0f0;
+    --text: #262626;
+    --text-2: #595959;
+    --text-3: #8c8c8c;
+    --accent: #1677ff;
+    --accent-hover: #4096ff;
+    --accent-weak: #e6f4ff;
+    --accent-border: #91caff;
+    --ok: #389e0d;
+    --warn: #d46b08;
+    --danger: #cf1322;
+    --mono: Consolas, "Courier New", "Microsoft YaHei", monospace;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 13px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    height: 46px;
+    padding: 0 20px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand h1 { margin: 0; font-size: 14px; font-weight: 600; }
+  .version { font-size: 12px; color: #bfbfbf; }
+
+  .pills {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-3);
+  }
+  .pill { display: inline; padding: 0; border: 0; background: none; white-space: nowrap; }
+  .pill b { margin-left: 4px; font-weight: 500; color: var(--text-2); }
+  .pill + .pill::before { content: "·"; margin: 0 8px; color: #d9d9d9; }
+  .pill.pill-warn, .pill.pill-warn b { color: var(--warn); }
+
+  /* ---------- 标签栏 ---------- */
+  .tabbar { background: var(--panel); border-bottom: 1px solid var(--border); }
+  .tabs { display: flex; gap: 28px; max-width: 1180px; margin: 0 auto; padding: 0 20px; }
+
+  .tab {
+    position: relative;
+    padding: 10px 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+  }
+  .tab:hover { color: var(--accent); }
+  .tab.active { color: var(--accent); font-weight: 500; }
+  .tab.active::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--accent);
+  }
+
+  main { max-width: 1180px; margin: 0 auto; padding: 16px 20px 56px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+
+  /* ---------- 基础元件 ---------- */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+  }
+
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+  input[type="text"], select {
+    height: 32px;
+    padding: 0 8px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    outline: none;
+  }
+  input[type="text"]:hover, select:hover { border-color: var(--accent-border); }
+  input[type="text"]:focus, select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(22, 119, 255, .1);
+  }
+  input:disabled, select:disabled { background: #f5f5f5; color: #bfbfbf; cursor: not-allowed; }
+
+  .btn {
+    height: 32px;
+    padding: 0 14px;
+    font: inherit;
+    font-size: 13px;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .btn:disabled { opacity: .6; cursor: progress; }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn-ghost { background: #fff; border-color: var(--border); color: var(--text-2); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { height: 28px; padding: 0 10px; font-size: 12px; }
+
+  /* 状态标签：方角，替代胶囊 */
+  .badge {
+    display: inline-block;
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: #fafafa;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 400;
+    line-height: 18px;
+    white-space: nowrap;
+  }
+  .badge.accent { background: var(--accent-weak); border-color: var(--accent-border); color: #0958d9; }
+  .badge.ok { background: #f6ffed; border-color: #b7eb8f; color: var(--ok); }
+  .badge.danger { background: #fff1f0; border-color: #ffa39e; color: var(--danger); }
+  .badge.warn { background: #fff7e6; border-color: #ffd591; color: var(--warn); }
+
+  .section-title { margin: 16px 0 8px; font-size: 12.5px; font-weight: 500; color: var(--text-3); }
+  .hint { margin: 8px 0 0; font-size: 12px; color: var(--text-3); }
+  .muted { color: var(--text-3); }
+  .mono { font-family: var(--mono); }
+
+  .notice {
+    margin: 0 0 12px;
+    padding: 6px 12px;
+    border: 1px solid #ffe58f;
+    border-left: 3px solid #faad14;
+    border-radius: 2px;
+    background: #fffbe6;
+    color: #614700;
+    font-size: 12.5px;
+  }
+
+  /* ---------- 问答 ---------- */
+  .searchbar { padding: 12px; }
+  .searchbar input[type="text"] { flex: 1 1 320px; min-width: 0; }
+
+  .examples { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .examples::before { content: "示例"; font-size: 12px; color: var(--text-3); }
+
+  .chip {
+    padding: 1px 8px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text-2);
+    background: #fafafa;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .chip:hover { border-color: var(--accent-border); background: #fff; color: #0958d9; }
+
+  .answer-card { margin-top: 12px; padding: 14px 16px; border-left: 3px solid var(--accent); }
+  .answer-card.is-refused { border-left-color: var(--danger); }
+  .answer-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .answer-text { font-size: 14px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+  .answer-text strong { font-weight: 600; }
+  .inline-code {
+    padding: 0 4px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    background: #f5f5f5;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+  }
+
+  .cite-ref { margin: 0 1px; font-size: 11px; color: var(--accent); vertical-align: 2px; }
+  .cite-ref:hover { text-decoration: underline; }
+
+  .cite-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
+  .cite-card {
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    text-align: left;
+    font: inherit;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .cite-card:hover { border-color: var(--accent-border); background: #fafcff; }
+  .cite-card.flash { border-color: var(--accent); background: var(--accent-weak); }
+
+  .cite-head { display: flex; gap: 6px; align-items: baseline; }
+  .cite-index { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .cite-doc { font-size: 12.5px; font-weight: 500; }
+  .cite-section { margin-top: 2px; font-size: 12px; color: var(--text-3); }
+  .cite-snippet {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: var(--text-2);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .cite-foot { margin-top: 6px; }
+  .chunk-id { font-family: var(--mono); font-size: 11px; color: #bfbfbf; }
+
+  /* ---------- Agent 轨迹 ---------- */
+  .trace-card { margin-top: 12px; padding: 14px 16px; }
+  .trace-card .section-title { margin-top: 0; }
+
+  .trace { list-style: none; margin: 0; padding: 0; }
+  .trace-item { padding: 10px 0; border-top: 1px solid var(--line); }
+  .trace-item:first-child { padding-top: 0; border-top: 0; }
+
+  .trace-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .trace-step { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+  .trace-latency { font-size: 11.5px; color: var(--text-3); }
+  .trace-tool { margin-top: 4px; font-family: var(--mono); font-size: 12.5px; color: #0958d9; }
+  .trace-pre {
+    margin: 6px 0 0;
+    padding: 8px 10px;
+    background: #fafafa;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 220px;
+    overflow: auto;
+  }
+  .trace-pre.err { background: #fff2f0; border-color: #ffccc7; color: var(--danger); }
+  .trace-note { margin-top: 4px; font-size: 12px; color: var(--warn); }
+
+  /* ---------- 检索结果 ---------- */
+  .result-count { margin: 14px 0 8px; font-size: 12px; color: var(--text-3); }
+  .hit { padding: 12px 14px; margin-bottom: 8px; }
+
+  .hit-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+  .rank { font-family: var(--mono); font-size: 12px; color: var(--text-3); }
+  .hit-doc { font-size: 13px; font-weight: 500; }
+  .hit-section { font-size: 12px; color: var(--text-3); }
+
+  .scores { display: grid; gap: 4px; margin-top: 10px; max-width: 620px; }
+  .score-row { display: grid; grid-template-columns: 56px 1fr 52px; align-items: center; gap: 8px; }
+  .score-label { font-family: var(--mono); font-size: 11.5px; color: var(--text-3); }
+  .score-track { height: 6px; background: #f0f0f0; border-radius: 1px; overflow: hidden; }
+  .score-fill { height: 100%; background: #bfbfbf; }
+  .score-fill.bm25 { background: #d9d9d9; }
+  .score-fill.vector { background: #bae0ff; }
+  .score-fill.fused { background: #69b1ff; }
+  .score-fill.rerank { background: #389e0d; }
+  .score-num {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--text-2);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reasons { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .reason {
+    padding: 0 6px;
+    font-size: 11.5px;
+    color: var(--text-3);
+    background: #fafafa;
+    border: 1px solid var(--line);
+    border-radius: 2px;
+  }
+
+  .hit-text {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    line-height: 1.7;
+    color: var(--text-2);
+    white-space: pre-wrap;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .hit-text.expanded { display: block; -webkit-line-clamp: unset; }
+
+  mark { background: #fff1b8; color: inherit; }
+
+  .expand {
+    margin-top: 4px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    font-size: 12px;
+    color: var(--accent);
+    cursor: pointer;
+  }
+  .expand:hover { text-decoration: underline; }
+
+  /* ---------- 表格 ---------- */
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { background: #fafafa; font-size: 12px; font-weight: 500; color: var(--text-2); }
+  tbody tr:hover { background: #fafcff; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  td.wrap { white-space: normal; }
+
+  /* ---------- 评测 ---------- */
+  .metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px;
+    margin: 12px 0;
+  }
+  .metric {
+    padding: 10px 12px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+  }
+  .metric .k { font-size: 12px; color: var(--text-3); }
+  .metric .v { margin-top: 2px; font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .metric .v.good { color: var(--ok); }
+
+  .card-title { padding: 12px 12px 0; font-size: 13px; font-weight: 500; }
+  .card-note { margin: 4px 0 0; padding: 0 12px; }
+  .card > .table-wrap { margin-top: 8px; }
+
+  details { margin-top: 12px; }
+  summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); }
+  summary:hover { color: var(--accent); }
+
+  /* ---------- 状态 ---------- */
+  .empty { padding: 40px 16px; text-align: center; font-size: 13px; color: var(--text-3); }
+
+  .error-box {
+    padding: 10px 12px;
+    border: 1px solid #ffccc7;
+    border-left: 3px solid #ff4d4f;
+    border-radius: 2px;
+    background: #fff2f0;
+    color: var(--danger);
+    font-size: 12.5px;
+    white-space: pre-wrap;
+  }
+
+  .skeleton { padding: 16px; }
+  .sk-line {
+    height: 10px;
+    margin-bottom: 10px;
+    background: #f0f0f0;
+    border-radius: 1px;
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  .sk-line:nth-child(2) { width: 86%; }
+  .sk-line:nth-child(3) { width: 58%; }
+  @keyframes pulse { 50% { opacity: .5; } }
+
+  #toast {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    z-index: 50;
+    padding: 8px 14px;
+    background: #262626;
+    color: #fff;
+    font-size: 12.5px;
+    border-radius: 2px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s;
+  }
+  #toast.show { opacity: 1; }
+
+  @media (max-width: 760px) {
+    .topbar { height: auto; padding: 8px 16px; flex-wrap: wrap; }
+    .pills { width: 100%; margin-left: 0; }
+    .tabs, main { padding-left: 16px; padding-right: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <h1>企业知识库 RAG 助手</h1>
+    <span class="version">v0.1.0</span>
+  </div>
+  <div class="pills" id="health">
+    <span class="pill">连接中…</span>
+  </div>
+  <button class="btn btn-ghost btn-sm" id="health-refresh" type="button" title="刷新索引状态">刷新</button>
+</header>
+
+<div class="tabbar">
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="ask" role="tab">问答</button>
+    <button class="tab" data-tab="search" role="tab">检索</button>
+    <button class="tab" data-tab="docs" role="tab">知识库</button>
+    <button class="tab" data-tab="eval" role="tab">评测</button>
+  </nav>
+</div>
+
+<main>
+  <!-- ==================== 问答 ==================== -->
+  <section class="panel active" id="panel-ask">
+    <form class="card searchbar" id="ask-form">
+      <div class="row">
+        <input type="text" id="ask-q" placeholder="问点什么，例如：退货运费谁承担" autocomplete="off" />
+        <select id="ask-mode" title="回答方式">
+          <option value="/chat">问答 /chat</option>
+          <option value="/agent">Agent /agent</option>
+        </select>
+        <select id="ask-k" title="召回条数">
+          <option value="3">Top-3</option>
+          <option value="5" selected>Top-5</option>
+          <option value="8">Top-8</option>
+        </select>
+        <button class="btn btn-primary" type="submit" id="ask-submit">提问</button>
+      </div>
+      <div class="examples" id="ask-examples">
+        <button type="button" class="chip" data-q="退货运费谁承担">退货运费谁承担</button>
+        <button type="button" class="chip" data-q="发票什么时候能开">发票什么时候能开</button>
+        <button type="button" class="chip" data-q="退货时效和换货时效有什么区别" data-mode="/agent">换货 vs 退货（Agent）</button>
+        <button type="button" class="chip" data-q="支持货到付款吗">拒答演示</button>
+      </div>
+    </form>
+    <div id="ask-result">
+      <div class="card empty">输入问题后，这里显示答案与引用来源。</div>
+    </div>
+  </section>
+
+  <!-- ==================== 检索 ==================== -->
+  <section class="panel" id="panel-search">
+    <form class="card searchbar" id="search-form">
+      <div class="row">
+        <input type="text" id="search-q" placeholder="只检索不生成，看每一路的原始分数" autocomplete="off" />
+        <select id="search-k" title="返回条数">
+          <option value="3">Top-3</option>
+          <option value="5" selected>Top-5</option>
+          <option value="8">Top-8</option>
+          <option value="10">Top-10</option>
+        </select>
+        <button class="btn btn-primary" type="submit">检索</button>
+      </div>
+      <p class="hint">条形按本组结果归一化，仅用于同一路召回的横向比较。</p>
+    </form>
+    <div id="search-result">
+      <div class="card empty">返回每条命中，并给出 bm25 / vector / fused / rerank 四层分数。</div>
+    </div>
+  </section>
+
+  <!-- ==================== 知识库 ==================== -->
+  <section class="panel" id="panel-docs">
+    <div class="card searchbar">
+      <div class="row">
+        <div class="muted" style="flex:1 1 auto">当前已入库的文档，按 sha256 幂等去重。</div>
+        <button class="btn btn-ghost" type="button" id="docs-refresh">刷新</button>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="ingest-path" value="data/docs" style="flex:1 1 260px" aria-label="入库路径" />
+        <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px">
+          <input type="checkbox" id="ingest-force" /> 强制重建
+        </label>
+        <button class="btn btn-ghost" type="button" id="ingest-run">执行入库</button>
+      </div>
+      <div id="ingest-result"></div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="table-wrap" id="docs-table">
+        <div class="empty">加载中…</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ==================== 评测 ==================== -->
+  <section class="panel" id="panel-eval">
+    <div class="card searchbar">
+      <div class="row">
+        <input type="text" id="eval-dataset" value="data/eval/queries.jsonl" style="flex:1 1 320px" aria-label="评测集路径" />
+        <label class="muted" style="display:flex;align-items:center;gap:6px;font-size:13px">
+          <input type="checkbox" id="eval-sweep" checked /> 阈值扫描
+        </label>
+        <button class="btn btn-primary" type="button" id="eval-run">跑评测</button>
+      </div>
+      <p class="hint">同一评测集下可对比不同配置；阈值扫描会多跑几轮。</p>
+    </div>
+    <div id="eval-result">
+      <div class="card empty">运行评测后，这里输出指标、阈值扫描与逐条样本。</div>
+    </div>
+  </section>
+</main>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  "use strict";
+
+  // ==================== 工具 ====================
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function escapeHtml(text) {
+    return String(text ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function badge(text, variant) {
+    return el("span", "badge" + (variant ? " " + variant : ""), text);
+  }
+
+  let toastTimer = null;
+  function toast(message) {
+    const node = $("#toast");
+    node.textContent = message;
+    node.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => node.classList.remove("show"), 1800);
+  }
+
+  async function api(path, options = {}) {
+    const init = { method: options.method || "GET", headers: {} };
+    if (options.body !== undefined) {
+      init.headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(options.body);
+    }
+    const response = await fetch(path, init);
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const payload = await response.json();
+        detail = payload.detail || JSON.stringify(payload);
+      } catch (_) {
+        detail = await response.text().catch(() => "");
+      }
+      throw new Error(`HTTP ${response.status} ${response.statusText}${detail ? " — " + detail : ""}`);
+    }
+    return response.json();
+  }
+
+  function setBusy(button, busy, label) {
+    if (!button) return;
+    if (busy) {
+      button.dataset.label = button.textContent;
+      button.disabled = true;
+      button.textContent = label || "处理中…";
+    } else {
+      button.disabled = false;
+      button.textContent = button.dataset.label || button.textContent;
+    }
+  }
+
+  function skeleton(lines = 3) {
+    const box = el("div", "card skeleton");
+    for (let i = 0; i < lines; i += 1) box.appendChild(el("div", "sk-line"));
+    return box;
+  }
+
+  function showError(container, error) {
+    container.innerHTML = "";
+    const box = el("div", "error-box", error && error.message ? error.message : String(error));
+    box.style.marginTop = "16px";
+    container.appendChild(box);
+  }
+
+  // ==================== 标签页 ====================
+  const tabs = $$(".tab");
+
+  function activateTab(name) {
+    tabs.forEach((tab) => tab.classList.toggle("active", tab.dataset.tab === name));
+    $$(".panel").forEach((panel) => panel.classList.toggle("active", panel.id === "panel-" + name));
+    if (location.hash !== "#" + name) {
+      try {
+        history.replaceState(null, "", "#" + name);
+      } catch (_) {
+        /* file:// 等环境下忽略 */
+      }
+    }
+    if (name === "docs" && !state.docsLoaded) loadDocs();
+  }
+
+  tabs.forEach((tab) => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
+
+  // ==================== 索引状态 ====================
+  const state = { health: null, docsLoaded: false, lastEval: null };
+
+  function renderHealth(health) {
+    const box = $("#health");
+    box.innerHTML = "";
+    box.appendChild(pill("文档", health.documents));
+    box.appendChild(pill("chunks", health.chunks));
+    box.appendChild(pill("embedder", health.embedder));
+    box.appendChild(pill("tokenizer", health.tokenizer));
+    box.appendChild(pill("llm", health.llm));
+
+    const llm = String(health.llm || "");
+    const offline = llm.startsWith("demo");
+    const note = $("#mode-note");
+    if (note) note.remove();
+    if (offline) {
+      const banner = el("div", "notice");
+      banner.id = "mode-note";
+      banner.textContent = "离线模式：未配置模型 Key，回答来自摘录或规则替身；配置 DEEPSEEK_API_KEY 后使用真实模型。";
+      $("#panel-ask").prepend(banner);
+    }
+  }
+
+  function pill(label, value) {
+    const node = el("span", "pill");
+    node.appendChild(document.createTextNode(label + " "));
+    node.appendChild(el("b", "", value === undefined || value === null ? "—" : value));
+    if (label === "llm" && String(value || "").startsWith("demo")) node.classList.add("pill-warn");
+    return node;
+  }
+
+  async function loadHealth() {
+    try {
+      const health = await api("/health");
+      state.health = health;
+      renderHealth(health);
+    } catch (error) {
+      const box = $("#health");
+      box.innerHTML = "";
+      box.appendChild(el("span", "pill pill-warn", "服务未连接"));
+    }
+  }
+
+  $("#health-refresh").addEventListener("click", async () => {
+    await loadHealth();
+    toast("已刷新索引状态");
+  });
+
+  // ==================== 问答 ====================
+  const modeLabel = {
+    llm: "LLM 回答",
+    extractive: "摘录回答",
+    agent: "Agent 回答",
+    "agent-fallback": "Agent 兜底",
+  };
+
+  function renderRichText(container, text) {
+    // 只认三种行内标记：引用[n]、**加粗**、`代码`。其余一律按纯文本插入，
+    // 不把模型输出当 HTML 解析。
+    const parts = String(text || "").split(/(\[\d+\]|\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
+    for (const part of parts) {
+      if (!part) continue;
+      const cite = /^\[(\d+)\]$/.exec(part);
+      const bold = /^\*\*([^*]+)\*\*$/.exec(part);
+      const code = /^`([^`]+)`$/.exec(part);
+
+      if (cite) {
+        const ref = el("a", "cite-ref", part);
+        ref.href = "#cite-" + cite[1];
+        ref.addEventListener("click", (event) => {
+          event.preventDefault();
+          focusCitation(cite[1]);
+        });
+        container.appendChild(ref);
+      } else if (bold) {
+        container.appendChild(el("strong", "", bold[1]));
+      } else if (code) {
+        container.appendChild(el("code", "inline-code", code[1]));
+      } else {
+        container.appendChild(document.createTextNode(part));
+      }
+    }
+  }
+
+  function focusCitation(index) {
+    const card = document.querySelector(`[data-cite-card="${index}"]`);
+    if (!card) return;
+    $$(".cite-card.flash").forEach((node) => node.classList.remove("flash"));
+    card.scrollIntoView({ behavior: "smooth", block: "center" });
+    card.classList.add("flash");
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function renderCitation(citation) {
+    const card = el("button", "cite-card");
+    card.type = "button";
+    card.id = "cite-" + citation.index;
+    card.dataset.citeCard = String(citation.index);
+
+    const head = el("div", "cite-head");
+    head.appendChild(el("span", "cite-index", "[" + citation.index + "]"));
+    head.appendChild(el("span", "cite-doc", citation.doc_title || "未知文档"));
+    card.appendChild(head);
+
+    card.appendChild(el("div", "cite-section", citation.section || ""));
+    card.appendChild(el("p", "cite-snippet", citation.snippet || ""));
+    const foot = el("div", "cite-foot");
+    foot.appendChild(el("code", "chunk-id", citation.chunk_id || ""));
+    card.appendChild(foot);
+
+    card.addEventListener("click", async () => {
+      const ok = await copyText(citation.chunk_id || "");
+      toast(ok ? "已复制 chunk_id" : citation.chunk_id || "");
+    });
+
+    return card;
+  }
+
+  const actionLabel = {
+    tool: "调用工具",
+    answer: "直接作答",
+    llm_error: "模型报错",
+    auto_cite: "回填引用",
+  };
+
+  function renderTrace(trace) {
+    const section = el("section", "card trace-card");
+    section.appendChild(el("h3", "section-title", "Agent 执行轨迹 · " + trace.length + " 步"));
+
+    const list = el("ol", "trace");
+    const dotClass = { tool: "is-tool", answer: "is-answer", llm_error: "is-error" };
+    for (const item of trace) {
+      const action = item.action || "unknown";
+      const li = el("li", "trace-item " + (dotClass[action] || ""));
+      const head = el("div", "trace-head");
+      if (item.step) head.appendChild(el("span", "trace-step", "step " + item.step));
+      head.appendChild(badge(actionLabel[action] || action, action === "tool" ? "accent" : action === "llm_error" ? "danger" : ""));
+      if (item.latency_ms !== undefined && item.latency_ms !== null) {
+        head.appendChild(el("span", "trace-latency", item.latency_ms + " ms"));
+      }
+      li.appendChild(head);
+
+      if (action === "tool") {
+        li.appendChild(el("div", "trace-tool", item.tool || ""));
+        if (item.arguments) li.appendChild(el("pre", "trace-pre", String(item.arguments)));
+        if (item.result) li.appendChild(el("pre", "trace-pre", "↳ " + String(item.result)));
+      } else if (action === "answer") {
+        li.appendChild(el("pre", "trace-pre", item.content || "（空）"));
+      } else if (action === "llm_error") {
+        li.appendChild(el("pre", "trace-pre err", item.error || ""));
+      } else if (action === "auto_cite") {
+        li.appendChild(el("div", "trace-note", item.note || ""));
+      } else {
+        li.appendChild(el("pre", "trace-pre", JSON.stringify(item, null, 2)));
+      }
+
+      list.appendChild(li);
+    }
+
+    section.appendChild(list);
+    return section;
+  }
+
+  function renderAnswer(data, endpoint) {
+    const container = $("#ask-result");
+    container.innerHTML = "";
+
+    const card = el("article", "card answer-card" + (data.refused ? " is-refused" : ""));
+    const meta = el("div", "answer-meta");
+    meta.appendChild(badge(modeLabel[data.mode] || data.mode || "未知", data.refused ? "" : "accent"));
+    if (data.latency_ms !== undefined && data.latency_ms !== null) {
+      meta.appendChild(badge(data.latency_ms + " ms", ""));
+    }
+    meta.appendChild(data.refused ? badge("已拒答", "danger") : badge("有依据", "ok"));
+    card.appendChild(meta);
+
+    const text = el("div", "answer-text");
+    if (data.answer) renderRichText(text, data.answer);
+    else text.appendChild(document.createTextNode("（空回答）"));
+    card.appendChild(text);
+
+    if (data.refused) {
+      card.appendChild(el("p", "hint", "检索信号不足时拒绝作答，避免无依据输出。"));
+    }
+    container.appendChild(card);
+
+    const citations = data.citations || [];
+    if (citations.length) {
+      const section = el("section", "");
+      section.appendChild(el("h3", "section-title", "引用 · " + citations.length + " 条（点击复制 chunk_id）"));
+      const grid = el("div", "cite-grid");
+      citations.forEach((citation) => grid.appendChild(renderCitation(citation)));
+      section.appendChild(grid);
+      container.appendChild(section);
+    }
+
+    if (endpoint === "/agent" && Array.isArray(data.trace) && data.trace.length) {
+      container.appendChild(renderTrace(data.trace));
+    }
+  }
+
+  $("#ask-mode").addEventListener("change", (event) => {
+    const isAgent = event.target.value === "/agent";
+    $("#ask-k").disabled = isAgent;
+    $("#ask-k").title = isAgent ? "Agent 的召回条数由配置决定" : "召回条数";
+  });
+
+  async function runAsk(query) {
+    const endpoint = $("#ask-mode").value;
+    const topK = Number($("#ask-k").value);
+    const container = $("#ask-result");
+    container.innerHTML = "";
+    container.appendChild(skeleton(4));
+
+    const button = $("#ask-submit");
+    setBusy(button, true, "思考中…");
+    try {
+      const data = await api(endpoint, { method: "POST", body: { query, top_k: topK } });
+      renderAnswer(data, endpoint);
+    } catch (error) {
+      showError(container, error);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  $("#ask-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = $("#ask-q").value.trim();
+    if (!query) {
+      toast("先输入一个问题");
+      $("#ask-q").focus();
+      return;
+    }
+    runAsk(query);
+  });
+
+  $$("#ask-examples .chip").forEach((chip) => {
+    chip.addEventListener("click", () => {
+      $("#ask-q").value = chip.dataset.q || chip.textContent;
+      if (chip.dataset.mode) $("#ask-mode").value = chip.dataset.mode;
+      $("#ask-mode").dispatchEvent(new Event("change"));
+      runAsk($("#ask-q").value.trim());
+    });
+  });
+
+  // ==================== 检索 ====================
+  function highlightText(text, query) {
+    const source = String(text ?? "");
+    const raw = String(query ?? "").trim();
+    if (!raw) return escapeHtml(source);
+
+    const tokens = Array.from(new Set([raw, ...raw.split(/\s+/)]))
+      .filter(Boolean)
+      .sort((a, b) => b.length - a.length);
+    const lower = source.toLowerCase();
+
+    let out = "";
+    let cursor = 0;
+    while (cursor < source.length) {
+      let bestIndex = -1;
+      let bestLength = 0;
+      for (const token of tokens) {
+        const index = lower.indexOf(token.toLowerCase(), cursor);
+        if (index === -1) continue;
+        if (bestIndex === -1 || index < bestIndex || (index === bestIndex && token.length > bestLength)) {
+          bestIndex = index;
+          bestLength = token.length;
+        }
+      }
+      if (bestIndex === -1) {
+        out += escapeHtml(source.slice(cursor));
+        break;
+      }
+      out += escapeHtml(source.slice(cursor, bestIndex));
+      out += "<mark>" + escapeHtml(source.slice(bestIndex, bestIndex + bestLength)) + "</mark>";
+      cursor = bestIndex + bestLength;
+    }
+    return out;
+  }
+
+  function scoreRow(label, value, max, className) {
+    const row = el("div", "score-row");
+    row.appendChild(el("span", "score-label", label));
+    const track = el("div", "score-track");
+    const fill = el("div", "score-fill " + className);
+    const ratio = max > 0 ? Math.max(0, Math.min(1, Math.abs(value) / max)) : 0;
+    fill.style.width = (ratio * 100).toFixed(1) + "%";
+    track.appendChild(fill);
+    row.appendChild(track);
+    row.appendChild(el("span", "score-num", Number(value || 0).toFixed(3)));
+    return row;
+  }
+
+  function renderHit(hit, rank, query, scale) {
+    const card = el("article", "card hit");
+
+    const head = el("div", "hit-head");
+    head.appendChild(el("span", "rank", "#" + rank));
+    head.appendChild(el("span", "hit-doc", hit.doc_id || ""));
+    head.appendChild(el("span", "hit-section", hit.section || ""));
+    head.appendChild(badge(hit.kind || "chunk", ""));
+    card.appendChild(head);
+
+    const scores = el("div", "scores");
+    scores.appendChild(scoreRow("bm25", hit.bm25, scale.bm25, "bm25"));
+    scores.appendChild(scoreRow("vector", hit.vector, scale.vector, "vector"));
+    scores.appendChild(scoreRow("fused", hit.fused, scale.fused, "fused"));
+    scores.appendChild(scoreRow("rerank", hit.rerank, scale.rerank, "rerank"));
+    card.appendChild(scores);
+
+    if (hit.reasons && hit.reasons.length) {
+      const reasons = el("div", "reasons");
+      hit.reasons.forEach((reason) => reasons.appendChild(el("span", "reason", reason)));
+      card.appendChild(reasons);
+    }
+
+    const text = el("p", "hit-text");
+    text.innerHTML = highlightText(hit.text || "", query);
+    card.appendChild(text);
+
+    const toggle = el("button", "expand", "展开全文");
+    toggle.type = "button";
+    toggle.addEventListener("click", () => {
+      const expanded = text.classList.toggle("expanded");
+      toggle.textContent = expanded ? "收起" : "展开全文";
+    });
+    card.appendChild(toggle);
+
+    return card;
+  }
+
+  async function runSearch(query) {
+    const topK = Number($("#search-k").value);
+    const container = $("#search-result");
+    container.innerHTML = "";
+    container.appendChild(skeleton(5));
+
+    const button = $("#search-form button[type=submit]");
+    setBusy(button, true, "检索中…");
+    try {
+      const data = await api("/search", { method: "POST", body: { query, top_k: topK } });
+      const hits = data.hits || [];
+      container.innerHTML = "";
+      if (!hits.length) {
+        container.appendChild(el("div", "card empty", "没有命中任何 chunk（可能是问题里的实词都不在索引词表里）。"));
+        return;
+      }
+
+      const scale = {
+        bm25: Math.max(...hits.map((h) => Math.abs(h.bm25 || 0)), 1e-9),
+        vector: Math.max(...hits.map((h) => Math.abs(h.vector || 0)), 1e-9),
+        fused: Math.max(...hits.map((h) => Math.abs(h.fused || 0)), 1e-9),
+        rerank: Math.max(...hits.map((h) => Math.abs(h.rerank || 0)), 1e-9),
+      };
+
+      container.appendChild(el("div", "result-count", `命中 ${hits.length} 条 · 查询「${query}」`));
+      hits.forEach((hit, index) => container.appendChild(renderHit(hit, index + 1, query, scale)));
+    } catch (error) {
+      showError(container, error);
+    } finally {
+      setBusy(button, false);
+    }
+  }
+
+  $("#search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = $("#search-q").value.trim();
+    if (!query) {
+      toast("先输入一个查询");
+      $("#search-q").focus();
+      return;
+    }
+    runSearch(query);
+  });
+
+  // ==================== 知识库 ====================
+  async function loadDocs() {
+    const table = $("#docs-table");
+    table.innerHTML = "";
+    table.appendChild(skeleton(4));
+    try {
+      const data = await api("/documents");
+      const documents = data.documents || [];
+      state.docsLoaded = true;
+      table.innerHTML = "";
+
+      if (!documents.length) {
+        table.appendChild(el("div", "empty", "还没有文档入库。把 md/pdf/docx/xlsx 放进 data/docs，然后点上面的「执行入库」。"));
+        return;
+      }
+
+      const tableEl = el("table");
+      const thead = el("thead");
+      const headRow = el("tr");
+      ["doc_id", "标题", "chunks", "版本", "入库时间"].forEach((label, index) => {
+        headRow.appendChild(el("th", index === 2 || index === 3 ? "num" : "", label));
+      });
+      thead.appendChild(headRow);
+      tableEl.appendChild(thead);
+
+      const tbody = el("tbody");
+      for (const doc of documents) {
+        const row = el("tr");
+        row.appendChild(el("td", "mono", doc.doc_id));
+        row.appendChild(el("td", "", doc.title || ""));
+        row.appendChild(el("td", "num", doc.chunks));
+        row.appendChild(el("td", "num", "v" + doc.version));
+        row.appendChild(el("td", "muted", String(doc.ingested_at || "").replace("T", " ").slice(0, 19)));
+        tbody.appendChild(row);
+      }
+      tableEl.appendChild(tbody);
+      const wrap = el("div", "table-wrap");
+      wrap.appendChild(tableEl);
+      table.appendChild(wrap);
+    } catch (error) {
+      showError(table, error);
+    }
+  }
+
+  $("#docs-refresh").addEventListener("click", loadDocs);
+
+  $("#ingest-run").addEventListener("click", async () => {
+    const button = $("#ingest-run");
+    const box = $("#ingest-result");
+    box.innerHTML = "";
+    setBusy(button, true, "入库中…");
+    try {
+      const report = await api("/ingest", {
+        method: "POST",
+        body: {
+          path: $("#ingest-path").value.trim() || "data/docs",
+          force: $("#ingest-force").checked,
+        },
+      });
+      box.appendChild(renderIngestReport(report));
+      await loadHealth();
+      state.docsLoaded = false;
+      await loadDocs();
+    } catch (error) {
+      showError(box, error);
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  function renderIngestReport(report) {
+    const wrap = el("div", "row");
+    wrap.style.marginTop = "12px";
+    wrap.appendChild(badge("新增 " + (report.added || []).length, "ok"));
+    wrap.appendChild(badge("更新 " + (report.updated || []).length, "accent"));
+    wrap.appendChild(badge("跳过 " + (report.skipped || []).length, ""));
+    wrap.appendChild(badge("chunks " + (report.chunks || 0), ""));
+    wrap.appendChild(badge((report.elapsed_ms || 0) + " ms", ""));
+    if (report.errors && report.errors.length) {
+      wrap.appendChild(badge("错误 " + report.errors.length, "danger"));
+    }
+    return wrap;
+  }
+
+  // ==================== 评测 ====================
+  function metricCard(label, value, good, raw) {
+    const card = el("div", "metric");
+    card.appendChild(el("div", "k", label));
+    let display = "—";
+    if (value !== null && value !== undefined) {
+      display = raw || typeof value !== "number" ? String(value) : value.toFixed(3);
+    }
+    card.appendChild(el("div", "v" + (good ? " good" : ""), display));
+    return card;
+  }
+
+  function renderEvalResult(data) {
+    const metrics = data.metrics || {};
+    const container = $("#eval-result");
+    container.innerHTML = "";
+
+    const grid = el("div", "metric-grid");
+    grid.appendChild(metricCard("recall@3", metrics["recall@3"], metrics["recall@3"] >= 0.8));
+    grid.appendChild(metricCard("recall@5", metrics["recall@5"], metrics["recall@5"] >= 0.8));
+    grid.appendChild(metricCard("MRR", metrics.mrr, metrics.mrr >= 0.7));
+    grid.appendChild(metricCard("拒答准确率", metrics.refusal_accuracy, metrics.refusal_accuracy >= 0.8));
+    grid.appendChild(metricCard("误拒率", metrics.over_refusal, metrics.over_refusal <= 0.1));
+    grid.appendChild(metricCard("样本数", metrics.cases, false, true));
+    container.appendChild(grid);
+
+    const meta = el("p", "hint",
+      `数据集 ${metrics.dataset || "—"} · 可回答 ${metrics.answerable} 条 / 不可回答 ${metrics.unanswerable} 条` +
+      (data.report_path ? ` · 报告 ${data.report_path}` : "")
+    );
+    container.appendChild(meta);
+
+    const sweep = data.sweep || [];
+    if (sweep.length) {
+      const card = el("div", "card");
+      card.style.marginTop = "12px";
+      const title = el("div", "card-title", "拒答阈值扫描 · max_unseen_ratio");
+      card.appendChild(title);
+      const note = el("p", "hint card-note", "阈值越激进，误拒越多、漏答越少，按业务风险选点。");
+      card.appendChild(note);
+
+      const table = el("table");
+      const thead = el("thead");
+      const headRow = el("tr");
+      ["max_unseen_ratio", "recall@5", "误拒率", "拒答准确率"].forEach((label, index) => {
+        headRow.appendChild(el("th", index === 0 ? "" : "num", label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = el("tbody");
+      const num = (value) => (typeof value === "number" ? value.toFixed(3) : "—");
+      for (const row of sweep) {
+        const tr = el("tr");
+        tr.appendChild(el("td", "mono", typeof row.threshold === "number" ? row.threshold.toFixed(1) : row.threshold));
+        tr.appendChild(el("td", "num", num(row["recall@5"])));
+        tr.appendChild(el("td", "num", num(row.over_refusal)));
+        tr.appendChild(el("td", "num", num(row.refusal_accuracy)));
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      const wrap = el("div", "table-wrap");
+      wrap.style.marginTop = "12px";
+      wrap.appendChild(table);
+      card.appendChild(wrap);
+      container.appendChild(card);
+    }
+
+    const cases = data.cases || [];
+    if (cases.length) {
+      const details = el("details");
+      details.appendChild(el("summary", "", `逐条样本 · ${cases.length} 条`));
+      const table = el("table");
+      const thead = el("thead");
+      const headRow = el("tr");
+      ["query", "首个命中排名", "是否拒答"].forEach((label, index) => {
+        headRow.appendChild(el("th", index === 1 ? "num" : "", label));
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+
+      const tbody = el("tbody");
+      for (const item of cases) {
+        const tr = el("tr");
+        tr.appendChild(el("td", "wrap", item.query));
+        tr.appendChild(el("td", "num", item.first_gold_rank === null ? "—" : item.first_gold_rank));
+        tr.appendChild(el("td", "", item.refused ? "是" : "否"));
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      const wrap = el("div", "table-wrap");
+      wrap.style.marginTop = "8px";
+      wrap.appendChild(table);
+      details.appendChild(wrap);
+      container.appendChild(details);
+    }
+  }
+
+  $("#eval-run").addEventListener("click", async () => {
+    const button = $("#eval-run");
+    const dataset = $("#eval-dataset").value.trim() || "data/eval/queries.jsonl";
+    const sweep = $("#eval-sweep").checked;
+    const container = $("#eval-result");
+    container.innerHTML = "";
+    container.appendChild(skeleton(6));
+    setBusy(button, true, "评测中…");
+    try {
+      const data = await api("/eval", {
+        method: "POST",
+        body: { dataset, report: "reports/eval.md", sweep },
+      });
+      state.lastEval = data;
+      renderEvalResult(data);
+    } catch (error) {
+      showError(container, error);
+    } finally {
+      setBusy(button, false);
+    }
+  });
+
+  // ==================== 启动 ====================
+  // 深链接：?q=问题[&mode=agent][&k=5] 直接跑问答，?s=关键词 直接检索。
+  // 演示时可以直接把链接发出去，不用现场输入。
+  const params = new URLSearchParams(location.search);
+  const presetQuestion = (params.get("q") || "").trim();
+  const presetSearch = (params.get("s") || "").trim();
+
+  if (presetQuestion) {
+    $("#ask-q").value = presetQuestion;
+    if (["/agent", "agent"].includes(params.get("mode"))) {
+      $("#ask-mode").value = "/agent";
+      $("#ask-mode").dispatchEvent(new Event("change"));
+    }
+    if (["3", "5", "8"].includes(params.get("k"))) $("#ask-k").value = params.get("k");
+  }
+  if (presetSearch) {
+    $("#search-q").value = presetSearch;
+  }
+
+  const initialTab = (location.hash || "").replace("#", "");
+  const startTab = presetSearch ? "search" : presetQuestion ? "ask" : initialTab;
+  activateTab(document.getElementById("panel-" + startTab) ? startTab : "ask");
+  loadHealth();
+
+  if (presetQuestion) runAsk(presetQuestion);
+  if (presetSearch) runSearch(presetSearch);
+})();
+</script>
+</body>
+</html>
