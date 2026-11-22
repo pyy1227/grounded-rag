@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 from fastapi.testclient import TestClient
 
 import ragagent.embedding as embedding
@@ -52,3 +53,62 @@ def test_health_exposes_real_vector_state(temp_env):
     assert body["vectors"] == storage.count_embeddings(body["embedder"])
     assert body["vectors"] > 0, "入库时总会写向量，即使检索侧关掉了向量"
     assert body["vector_models_in_db"]
+
+
+def test_transient_embedding_failure_retries_instead_of_permanent_degrade(temp_env):
+    """一次 embedding 失败只应进入冷却，不能把向量索引永久置空。"""
+    config, storage = temp_env
+    config.retrieval.enable_vector = True
+    model = "flaky"
+    chunks = storage.iter_chunks()
+    storage.save_embeddings(
+        model,
+        {chunk.chunk_id: np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32) for chunk in chunks},
+    )
+
+    class FlakyEmbedder:
+        def __init__(self) -> None:
+            self.model = model
+            self.dim = 4
+            self.fail = True
+
+        def embed(self, texts):
+            if self.fail:
+                raise RuntimeError("embedding down")
+            return np.ones((len(texts), 4), dtype=np.float32)
+
+    embedder = FlakyEmbedder()
+    retriever = Retriever(storage, config, embedder=embedder)
+
+    hits = retriever.search("退货运费谁承担")
+    assert hits, "向量失败不能影响 BM25 主路径"
+    assert retriever.vector_active is False
+    assert retriever.index_status()["retry_pending"] is True
+
+    embedder.fail = False
+    retriever._vector_retry_at = 0.0
+    retriever.search("退货运费谁承担")
+    assert retriever.vector_active is True, "冷却结束后应自动恢复向量检索"
+
+
+def test_health_reflects_runtime_vector_failure(temp_env):
+    """/health 报运行态：embedding 失败后 vector_active=false，但库里仍有向量。"""
+    config, storage = temp_env
+    config.retrieval.enable_vector = True
+    app = create_app(config=config)
+    retriever = app.state.retriever
+
+    class FailingEmbedder:
+        model = retriever.embedder.model
+
+        def embed(self, texts):
+            raise RuntimeError("embedding down")
+
+    retriever.embedder = FailingEmbedder()
+    client = TestClient(app)
+    client.post("/search", json={"query": "退货运费谁承担"})
+
+    body = client.get("/health").json()
+    assert body["vector_active"] is False
+    assert body["vectors"] > 0
+    assert body["vector_retry_pending"] is True

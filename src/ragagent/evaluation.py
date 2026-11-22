@@ -73,6 +73,9 @@ def evaluate(
                 case.query, top_k=max_k, use_rerank=True, apply_refusal=False
             )
             refused = bool(getattr(retriever, "last_refused", False)) or not hits
+            # 拒答判定为 need_more 时会扩大窗口重试，返回条数可能超过 top_k。
+            # 指标必须按请求的 k 截断，否则不同 query 的 MRR 截断位置不一样。
+            hits = hits[:max_k]
             unseen_ratios.append(retriever.last_unseen_ratio)
             ranks = []
             doc_ranks = []
@@ -176,7 +179,12 @@ def sweep_thresholds(
 
     输出 recall@5(effective) / 误拒率 / 拒答准确率三者的取舍表，用于按业务风险选点。
     recall 用 effective 版本——用户视角的损失里，被误拒和检索没命中一样算没拿到答案。
+
+    语义校验（verifier）启用时它以模型判定为准，max_unseen_ratio 根本不参与决策，
+    扫描只会得到一张恒等的表；此时直接返回空，由调用方跳过。
     """
+    if getattr(retriever, "verifier", None) is not None:
+        return []
     rows: List[Dict[str, Any]] = []
     for threshold in thresholds:
         result = evaluate(retriever, cases, k_values=(5,), max_unseen_ratio=threshold)
@@ -210,9 +218,26 @@ def write_report(result: Dict[str, Any], path: str | Path, extra: Optional[Dict[
         "| 指标 | 数值 |",
         "| --- | ---: |",
     ]
-    for key in ("recall@3", "recall@3_effective", "recall@5", "recall@5_effective",
-                "mrr", "over_refusal", "refusal_accuracy",
-                "mean_unseen_ratio_answerable", "mean_unseen_ratio_unanswerable"):
+    # recall 指标按 k 动态列出（含文档级口径，避免「报告里没有 README 说的 recall@k_doc」）
+    recall_keys: List[str] = []
+    recall_ks = sorted(
+        {
+            int(key[len("recall@"):].split("_")[0])
+            for key in metrics
+            if key.startswith("recall@") and key[len("recall@"):].split("_")[0].isdigit()
+        }
+    )
+    for k in recall_ks:
+        for suffix in ("", "_doc", "_effective"):
+            key = f"recall@{k}{suffix}"
+            if key in metrics:
+                recall_keys.append(key)
+
+    for key in [
+        *recall_keys,
+        "mrr", "over_refusal", "refusal_accuracy",
+        "mean_unseen_ratio_answerable", "mean_unseen_ratio_unanswerable",
+    ]:
         if key in metrics:
             value = metrics[key]
             lines.append(f"| {key} | {'-' if value is None else value} |")

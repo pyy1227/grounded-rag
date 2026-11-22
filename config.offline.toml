@@ -43,10 +43,15 @@ rerank_mode = "heuristic"
 rerank_top_k = 20
 refuse_threshold = 0.0
 max_unseen_ratio = 0.8
+unseen_bigram_weight = 0.5
+# 离线没有 Key：verify_mode=llm 也会自动退回词面信号；显式写 off 让报告里的配置更诚实
+verify_mode = "off"
+grounding_mode = "off"
 
 [agent]
 max_steps = 4
 top_k = 5
+require_citation = true
 
 [evaluation]
 # dev 用于调阈值；test 是留出集，只在最终报告里跑一次

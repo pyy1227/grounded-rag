@@ -81,3 +81,20 @@ def test_unsupported_answer_falls_back_to_extract(workdir):
     assert answer.grounded is False
     assert answer.refused is False
     assert "承担" in answer.text  # 摘录来自原文
+
+
+class RaisingChat:
+    name = "raising"
+
+    def chat(self, *args, **kwargs):
+        raise RuntimeError("upstream 500")
+
+
+def test_llm_failure_degrades_to_excerpt_not_just_error_note(workdir):
+    """模型调用失败时，应拿已检索到的片段做摘录，而不是只回一句错误提示。"""
+    answer = _generator(workdir, RaisingChat()).answer("退货运费谁承担")
+    assert answer.refused is False
+    assert answer.mode == "extractive"
+    assert answer.citations, "摘录也要带引用"
+    assert "承担" in answer.text, "必须包含检索到的原文，而不是只有「已降级为摘录」"
+    assert "模型调用失败" in answer.text

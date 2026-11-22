@@ -111,10 +111,15 @@ class AnswerGenerator:
             result = self.chat.chat(messages, tools=None, temperature=0.0)
             text = (result.content or "").strip()
         except Exception:
-            return self._extractive_answer([], citations, note="模型调用失败，已降级为摘录")
+            # 模型失败不代表没有答案：用已经检索到的 hits 做摘录，而不是只回一句错误提示
+            return self._extractive_answer(
+                hits or [], citations, note="模型调用失败，已降级为摘录"
+            )
 
         if not text:
-            return self._extractive_answer([], citations, note="模型返回空内容")
+            return self._extractive_answer(
+                hits or [], citations, note="模型返回空内容，已降级为摘录"
+            )
 
         used = {
             int(match) for match in CITATION_RE.findall(text)

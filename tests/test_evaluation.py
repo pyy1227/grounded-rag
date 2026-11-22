@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 
 from ragagent.config import AppConfig
-from ragagent.evaluation import _match, evaluate, load_dataset, sweep_thresholds
+from ragagent.evaluation import _match, evaluate, load_dataset, sweep_thresholds, write_report
 from ragagent.models import Chunk, EvalCase, SearchHit
 
 
@@ -88,3 +88,41 @@ def test_sweep_restores_config():
     rows = sweep_thresholds(retriever, cases, thresholds=(1.0, 0.5))
     assert len(rows) == 2
     assert retriever.config.retrieval.max_unseen_ratio == 0.8
+
+
+def test_widened_hits_are_truncated_to_requested_k():
+    """need_more 会把 top_k=5 扩到 10；指标必须按 k 截断，否则 MRR 会虚高。"""
+
+    class WideRetriever(StubRetriever):
+        def search(self, query, top_k=None, use_rerank=None, apply_refusal=True, **kwargs):
+            self.last_refused = False
+            # gold 在第 7 位：若没截断，MRR 会算成 1/7
+            return [
+                _hit("其他文档", f"无关章节{i}") for i in range(6)
+            ] + [_hit("售后政策", "退货运费")]
+
+    cases = [EvalCase(query="q1", gold=["售后政策::退货运费"])]
+    result = evaluate(WideRetriever(), cases, k_values=(5,))
+    metrics = result["metrics"]
+    assert metrics["recall@5"] == 0.0
+    assert metrics["recall@5_doc"] == 0.0
+    assert metrics["mrr"] == 0.0
+
+
+def test_report_includes_document_level_recall(workdir):
+    retriever = StubRetriever()
+    cases = [EvalCase(query="q1", gold=["售后政策::退货运费"])]
+    result = evaluate(retriever, cases, k_values=(3, 5))
+    path = write_report(result, workdir / "report.md")
+    text = (workdir / "report.md").read_text(encoding="utf-8")
+    assert "recall@3_doc" in text
+    assert "recall@5_doc" in text
+    assert path
+
+
+def test_sweep_is_skipped_when_semantic_verifier_is_active():
+    """LLM 校验优先于词面信号，此时阈值扫描只会得到恒等表，应直接返回空。"""
+    retriever = StubRetriever()
+    retriever.verifier = object()
+    cases = [EvalCase(query="q1", gold=["售后政策::退货运费"])]
+    assert sweep_thresholds(retriever, cases) == []

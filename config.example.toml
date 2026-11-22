@@ -52,6 +52,11 @@ rerank_mode = "heuristic" # heuristic | llm | noop
 rerank_top_k = 20
 refuse_threshold = 0.0    # 用 `ragagent eval` 的阈值扫描校准
 max_unseen_ratio = 0.8    # 实词未见比例阈值，越小越容易拒答（1.0 表示只拒答全未见）
+unseen_bigram_weight = 0.5  # 拒答信号里二字词的权重（bigram 多为噪声，默认降权）
+verify_mode = "llm"       # llm = 模型判断「资料够不够」；off = 只用词面信号（离线）
+verify_snippets = 5       # 校验器看前几条片段（3 条会漏掉排在第 4 位的答案）
+verify_retry_top_k = 10   # need_more 时扩大到的检索窗口
+grounding_mode = "llm"    # 生成后再校验答案是否被引用段落支持；off = 关闭
 
 [agent]
 max_steps = 4
@@ -59,5 +64,6 @@ top_k = 5
 require_citation = true
 
 [evaluation]
-dataset = "data/eval/queries.jsonl"
+# dev 用于调阈值；test 是留出集，只在最终报告里跑一次
+dataset = "data/eval/queries-dev.jsonl"
 k_values = [3, 5]

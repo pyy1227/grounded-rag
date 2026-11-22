@@ -94,7 +94,8 @@ class AgentConfig:
 
 @dataclass
 class EvalConfig:
-    dataset: str = "data/eval/queries.jsonl"
+    # 仓库里只带 dev/test 两份；默认用 dev（调参用），test 是留出集
+    dataset: str = "data/eval/queries-dev.jsonl"
     k_values: tuple[int, ...] = (3, 5)
 
 

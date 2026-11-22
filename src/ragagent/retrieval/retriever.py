@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Dict, List, Optional, Tuple
 
 from ..config import AppConfig
@@ -52,6 +53,8 @@ class Retriever:
         # 向量那一路是否真的可用（配置写了 enable_vector 不等于库里有向量）
         self.vector_active: bool = False
         self.vector_count: int = 0
+        # embedding 服务失败后的冷却时间：不把索引永久置空，到点自动重试
+        self._vector_retry_at: float = 0.0
         # 最近一次检索的拒答判定（apply_refusal=False 时也会算，只是不生效）
         self.last_refused: bool = False
         self.last_refusal_reason: Optional[str] = None
@@ -77,9 +80,23 @@ class Retriever:
         vectors = {cid: vec for cid, vec in vectors.items() if cid in self._by_id}
         self._vector = VectorIndex.from_embeddings(vectors) if vectors else None
         self.vector_count = len(vectors)
-        self.vector_active = self._vector is not None
+        self.vector_active = self._vector is not None and self.config.retrieval.enable_vector
+        # 索引重建（重新入库/换模型）后立即允许重试向量
+        self._vector_retry_at = 0.0
         self._warn_if_vectors_missing()
         self._signature = signature
+
+    def index_status(self) -> Dict[str, object]:
+        """运行态：向量这一路当前是否可用、加载了几条、是否在失败冷却中。
+
+        `/health` 和 `ragagent stats` 用它，避免只看「库里有多少向量」而误判。
+        """
+        self._ensure_index()
+        return {
+            "vector_active": self.vector_active,
+            "vectors": self.vector_count,
+            "retry_pending": time.monotonic() < self._vector_retry_at,
+        }
 
     def _warn_if_vectors_missing(self) -> None:
         """开了向量检索但库里没有对应模型的向量时，明确告警，不静默降级。
@@ -158,7 +175,7 @@ class Retriever:
 
         bm25_hits = self._bm25.search(query, candidate_k) if self._bm25 else []
         vector_hits = []
-        if use_vector and self._vector is not None:
+        if use_vector and self._vector is not None and time.monotonic() >= self._vector_retry_at:
             try:
                 query_vector = self.embedder.embed([query])[0]
                 min_score = float(self.config.retrieval.vector_min_score)
@@ -167,12 +184,14 @@ class Retriever:
                     for chunk_id, score in self._vector.search(query_vector, candidate_k)
                     if score >= min_score
                 ]
+                self.vector_active = True
             except Exception as exc:  # embedding 服务不可用时降级，不影响主流程
-                self._vector = None
+                # 注意：**不要**把 self._vector 置空。一次网络抖动就永久退化成 BM25+短语，
+                # 直到重新入库才会恢复；这里只进入冷却，下次检索继续尝试。
                 self.vector_active = False
+                self._vector_retry_at = time.monotonic() + 30.0
                 self.last_sources = {"vector_error": 1}
-                logger.warning("向量检索失败，已降级为 BM25+短语：%s", exc)
-                _ = exc
+                logger.warning("向量检索失败，本次降级为 BM25+短语（30 秒后重试）：%s", exc)
         phrase_hits = self._phrase_search(query, candidate_k)
 
         rank_lists: Dict[str, List[str]] = {

@@ -41,8 +41,16 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     config = _load_config(args)
     storage = _build(config)
     indexer = Indexer(storage, config)
-    report = indexer.ingest_path(args.path, force=args.force)
+    try:
+        report = indexer.ingest_path(args.path, force=args.force)
+    except (OSError, ValueError) as exc:
+        print(f"入库失败: {exc}", file=sys.stderr)
+        return 1
     _print(report)
+    if report.get("errors"):
+        for item in report["errors"]:
+            print(f"入库失败: {item['path']}: {item['error']}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -99,7 +107,14 @@ def cmd_eval(args: argparse.Namespace) -> int:
     )
     extra: dict = {}
     if not args.no_sweep:
-        extra["sweep"] = sweep_thresholds(retriever, cases)
+        if getattr(retriever, "verifier", None) is not None:
+            print(
+                "语义校验已启用，跳过 max_unseen_ratio 阈值扫描"
+                "（该扫描只对离线词面拒答有意义）",
+                file=sys.stderr,
+            )
+        else:
+            extra["sweep"] = sweep_thresholds(retriever, cases)
     report_path = write_report(result, args.report, extra)
 
     storage.save_eval_run(
@@ -122,8 +137,10 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
     config = _load_config(args)
     storage = _build(config)
-    model = Retriever(storage, config).embedder.model
-    vectors = storage.count_embeddings(model)
+    retriever = Retriever(storage, config)
+    model = retriever.embedder.model
+    status = retriever.index_status()
+    vectors_in_db = storage.count_embeddings(model)
     _print(
         {
             "documents": len(storage.list_documents()),
@@ -131,9 +148,11 @@ def cmd_stats(args: argparse.Namespace) -> int:
             "embedder": config.embedding.provider,
             "embedding_model": model,
             "vector_enabled": config.retrieval.enable_vector,
-            # 配置开了向量、库里却没有对应向量时这里是 false
-            "vector_active": vectors > 0,
-            "vectors": vectors,
+            # 运行态：embedding 服务失败后这里会变 false
+            "vector_active": status["vector_active"],
+            "vectors": vectors_in_db,
+            "vectors_loaded": status["vectors"],
+            "vector_retry_pending": status["retry_pending"],
             "vector_models_in_db": storage.list_embedding_models(),
             "tokenizer": tokenizer_mode(),
             "db": config.storage.path,
@@ -159,8 +178,16 @@ def cmd_ingest_jsonl(args: argparse.Namespace) -> int:
             if line and not line.startswith("#"):
                 records.append(json.loads(line))
     storage = _build(config)
-    report = Indexer(storage, config).ingest_records(records)
+    try:
+        report = Indexer(storage, config).ingest_records(records)
+    except (OSError, ValueError) as exc:
+        print(f"记录入库失败: {exc}", file=sys.stderr)
+        return 1
     _print(report)
+    if report.get("errors"):
+        for item in report["errors"]:
+            print(f"记录入库失败: {item['path']}: {item['error']}", file=sys.stderr)
+        return 1
     return 0
 
 

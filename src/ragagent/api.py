@@ -8,13 +8,14 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .agent.loop import AgentRunner
 from .config import AppConfig
@@ -34,18 +35,29 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 class IngestRequest(BaseModel):
-    path: Optional[str] = Field(None, description="文件或目录，默认 data/docs")
+    path: Optional[str] = Field(None, description="文件或目录，默认 data/docs，且必须位于 RAGAGENT_INGEST_ROOT 内")
     force: bool = False
 
 
-class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 5
+class QueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=2000, description="用户问题")
+    top_k: int = Field(5, ge=1, le=20, description="返回条数（1-20）")
+
+    @field_validator("query")
+    @classmethod
+    def _reject_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("query 不能为空")
+        return value
 
 
-class AskRequest(BaseModel):
-    query: str
-    top_k: int = 5
+class SearchRequest(QueryRequest):
+    pass
+
+
+class AskRequest(QueryRequest):
+    pass
 
 
 class EvalRequest(BaseModel):
@@ -62,6 +74,44 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
     generator = AnswerGenerator(storage, app_config, retriever)
     agent = AgentRunner(storage, app_config, retriever=retriever)
 
+    # ==================== 安全边界 ====================
+    # 服务端只允许读写配置好的目录，避免 /ingest、/eval 变成任意文件读写。
+    ingest_root = Path(os.environ.get("RAGAGENT_INGEST_ROOT", DEFAULT_DOCS)).resolve()
+    eval_root = Path(os.environ.get("RAGAGENT_EVAL_ROOT", "data/eval")).resolve()
+    report_root = Path(os.environ.get("RAGAGENT_REPORT_ROOT", "reports")).resolve()
+    api_token = os.environ.get("RAGAGENT_API_TOKEN", "").strip()
+
+    def resolve_within(value: str, root: Path, label: str) -> Path:
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(root)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{label}必须位于 {root} 内: {value}",
+            )
+        return resolved
+
+    def require_token(request: Request) -> None:
+        """设置了 RAGAGENT_API_TOKEN 才启用；不设置时保持本地零配置体验。"""
+        if not api_token:
+            return
+        provided = request.headers.get("x-api-token", "").strip()
+        authorization = request.headers.get("authorization", "")
+        if authorization.lower().startswith("bearer "):
+            provided = authorization[7:].strip()
+        if not provided or not secrets.compare_digest(
+            provided.encode("utf-8"), api_token.encode("utf-8")
+        ):
+            raise HTTPException(
+                status_code=401,
+                detail="缺少或错误的 API token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     app = FastAPI(title="RAG Agent", version="0.1.0")
     app.state.config = app_config
     app.state.storage = storage
@@ -75,28 +125,39 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
         from .tokenization import mode as tokenizer_mode
 
         model = retriever.embedder.model
-        vectors = storage.count_embeddings(model)
+        status = retriever.index_status()
+        vectors_in_db = storage.count_embeddings(model)
         return {
             "status": "ok",
             "documents": len(storage.list_documents()),
             "chunks": storage.count_chunks(),
             "embedder": model,
             "vector_enabled": app_config.retrieval.enable_vector,
-            # 配置开了向量、库里却没有对应向量时，这里会是 false——不要只看 embedder 名字
-            "vector_active": vectors > 0,
-            "vectors": vectors,
+            # 这是**运行态**：embedding 服务失败后这里会变 false，不要只看配置或库里有几条向量
+            "vector_active": status["vector_active"],
+            "vectors": vectors_in_db,
+            "vectors_loaded": status["vectors"],
+            "vector_retry_pending": status["retry_pending"],
             "vector_models_in_db": storage.list_embedding_models(),
             "tokenizer": tokenizer_mode(),
             "llm": getattr(generator.chat, "name", "unknown"),
         }
 
-    @app.post("/ingest")
+    @app.post("/ingest", dependencies=[Depends(require_token)])
     def ingest(request: IngestRequest) -> Dict[str, Any]:
-        path = request.path or DEFAULT_DOCS
-        if not Path(path).exists():
-            raise HTTPException(status_code=404, detail=f"路径不存在: {path}")
-        report = indexer.ingest_path(path, force=request.force)
+        path = resolve_within(request.path or DEFAULT_DOCS, ingest_root, "入库路径")
+        if not path.exists():
+            raise HTTPException(status_code=404, detail=f"路径不存在: {request.path or DEFAULT_DOCS}")
+        try:
+            report = indexer.ingest_path(str(path), force=request.force)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         retriever.invalidate()
+        if report.get("errors"):
+            raise HTTPException(
+                status_code=422,
+                detail={"message": "部分或全部文件入库失败", "report": report},
+            )
         return report
 
     @app.get("/documents")
@@ -127,25 +188,37 @@ def create_app(config: Optional[AppConfig] = None, config_path: Optional[str] = 
     def agent_endpoint(request: AskRequest) -> Dict[str, Any]:
         return agent.run(request.query).to_dict()
 
-    @app.post("/eval")
+    @app.post("/eval", dependencies=[Depends(require_token)])
     def run_eval(request: EvalRequest) -> Dict[str, Any]:
-        dataset = request.dataset or app_config.evaluation.dataset
-        if not Path(dataset).exists():
+        dataset = resolve_within(
+            request.dataset or app_config.evaluation.dataset, eval_root, "评测集路径"
+        )
+        if not dataset.exists():
             raise HTTPException(status_code=404, detail=f"评测集不存在: {dataset}")
+        # 先校验报告路径，避免跑完评测才发现写不出去
+        report_path = (
+            str(resolve_within(request.report, report_root, "报告路径"))
+            if request.report
+            else None
+        )
         cases = load_dataset(dataset)
-        result = evaluate(retriever, cases, k_values=app_config.evaluation.k_values, dataset=dataset)
-        extra = {"sweep": sweep_thresholds(retriever, cases)} if request.sweep else {}
-        if request.report:
-            report_path = write_report(result, request.report, extra)
+        result = evaluate(retriever, cases, k_values=app_config.evaluation.k_values, dataset=str(dataset))
+
+        # 语义校验优先于词面信号，此时扫描 max_unseen_ratio 只会得到一张恒等的表
+        sweep_enabled = bool(request.sweep) and getattr(retriever, "verifier", None) is None
+        extra = {"sweep": sweep_thresholds(retriever, cases)} if sweep_enabled else {}
+        if report_path:
+            write_report(result, report_path, extra)
             storage.save_eval_run(
                 run_id=f"{Path(dataset).stem}-{result['metrics']['generated_at']}",
-                dataset=dataset,
+                dataset=str(dataset),
                 config_json=result["config"],
                 metrics=result["metrics"],
                 report_path=report_path,
             )
             result["report_path"] = report_path
         result["sweep"] = extra.get("sweep", [])
+        result["sweep_skipped"] = bool(request.sweep) and not sweep_enabled
         return result
 
     # 静态页必须最后挂载：Starlette 按注册顺序匹配，挂到 "/" 会兜住所有未命中路径，

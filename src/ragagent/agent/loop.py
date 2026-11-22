@@ -12,9 +12,10 @@ from typing import Any, Dict, List, Optional
 from ..config import AppConfig
 from ..generation import REFUSE_TEXT, AnswerGenerator
 from ..llm import ChatModel, build_chat
-from ..models import Answer, Citation
+from ..models import Answer, Citation, SearchHit
 from ..retrieval.retriever import Retriever
 from ..storage import Storage
+from ..verify import build_grounding
 from .prompts import AGENT_SYSTEM_PROMPT
 from .tools import AgentContext, ToolRegistry
 
@@ -35,6 +36,7 @@ class AgentRunner:
         config: AppConfig,
         chat: Optional[ChatModel] = None,
         retriever: Optional[Retriever] = None,
+        grounding: Optional[Any] = None,
     ) -> None:
         self.storage = storage
         self.config = config
@@ -42,6 +44,11 @@ class AgentRunner:
         self.retriever = retriever or Retriever(storage, config, chat=self.chat)
         self.registry = ToolRegistry()
         self.max_steps = max(1, int(config.agent.max_steps))
+        self.require_citation = bool(config.agent.require_citation)
+        # 和 /chat 共用同一层接地校验：Agent 的答案也要能被引用段落支持
+        self.grounding = grounding
+        if self.grounding is None and config.retrieval.grounding_mode == "llm" and config.llm_api_key():
+            self.grounding = build_grounding(self.chat)
 
     def run(self, query: str) -> Answer:
         started = time.perf_counter()
@@ -128,7 +135,7 @@ class AgentRunner:
             text = str(submitted.get("answer") or "").strip()
             refused = bool(submitted.get("refused"))
             citations = self._citations_from_ids(ctx, submitted.get("citations") or [])
-            if not citations and ctx.hits:
+            if not citations and ctx.hits and self.require_citation:
                 citations = self._auto_citations(ctx)
                 ctx.trace.append({"action": "auto_cite", "note": "模型未给出有效引用，使用检索结果回填"})
             if refused or not text:
@@ -139,26 +146,86 @@ class AgentRunner:
                     mode="agent",
                     latency_ms=latency,
                 )
-            return Answer(text=text, citations=citations, refused=False, mode="agent", latency_ms=latency)
+            if not citations and (self.require_citation or not ctx.hits):
+                return self._refuse(latency, ctx, "missing_citation")
+            grounded, note = self._check_grounding(ctx, text, citations)
+            if grounded is False:
+                ctx.trace.append({"action": "grounding_failed", "note": note})
+                return self._fallback(ctx, citations, latency, "答案未被引用资料支持，已降级为摘录")
+            return Answer(
+                text=text,
+                citations=citations,
+                refused=False,
+                mode="agent",
+                latency_ms=latency,
+                grounded=grounded,
+            )
 
         if final_text.strip():
-            citations = self._auto_citations(ctx) if ctx.hits else []
-            if not citations:
+            citations = self._auto_citations(ctx) if (ctx.hits and self.require_citation) else []
+            if not citations and (self.require_citation or not ctx.hits):
                 # 没检索就作答：按拒答处理，避免无依据回答
-                return Answer(
-                    text=REFUSE_TEXT,
-                    refused=True,
-                    mode="agent",
-                    latency_ms=latency,
-                )
-            return Answer(text=final_text.strip(), citations=citations, refused=False, mode="agent", latency_ms=latency)
+                return self._refuse(latency, ctx, "missing_citation")
+            grounded, note = self._check_grounding(ctx, final_text.strip(), citations)
+            if grounded is False:
+                ctx.trace.append({"action": "grounding_failed", "note": note})
+                return self._fallback(ctx, citations, latency, "答案未被引用资料支持，已降级为摘录")
+            return Answer(
+                text=final_text.strip(),
+                citations=citations,
+                refused=False,
+                mode="agent",
+                latency_ms=latency,
+                grounded=grounded,
+            )
 
         # 步数用尽且没有提交：用已有检索结果做摘录式兜底
+        return self._fallback(ctx, self._auto_citations(ctx), latency)
+
+    def _refuse(self, latency: int, ctx: AgentContext, reason: str) -> Answer:
+        ctx.trace.append({"action": "refused", "note": reason})
+        return Answer(text=REFUSE_TEXT, refused=True, mode="agent", latency_ms=latency)
+
+    def _fallback(
+        self,
+        ctx: AgentContext,
+        citations: List[Citation],
+        latency: int,
+        note: str = "",
+    ) -> Answer:
         generator = AnswerGenerator(self.storage, self.config, self.retriever, self.chat)
-        fallback = generator._extractive_answer(ctx.hits, self._auto_citations(ctx))
+        fallback = generator._extractive_answer(
+            ctx.hits, citations or self._auto_citations(ctx), note=note
+        )
         fallback.mode = "agent-fallback"
         fallback.latency_ms = latency
+        if note and not fallback.refused:
+            fallback.grounded = False
         return fallback
+
+    def _check_grounding(
+        self,
+        ctx: AgentContext,
+        text: str,
+        citations: List[Citation],
+    ) -> tuple[Optional[bool], str]:
+        """Agent 答案也要过接地校验；没启用校验时返回 None（未知）。"""
+        if self.grounding is None:
+            return None, ""
+
+        contexts: List[str] = []
+        for citation in citations[:3]:
+            chunk = self.storage.get_chunk(citation.chunk_id)
+            if chunk is None:
+                continue
+            contexts.append(
+                self.retriever.expand(SearchHit(chunk=chunk, score=0.0), max_chars=800)
+            )
+        if not contexts:
+            contexts = [self.retriever.expand(hit, max_chars=800) for hit in ctx.hits[:3]]
+        if not contexts:
+            return False, "没有可用的引用资料"
+        return self.grounding.check(text, contexts)
 
     def _citations_from_ids(self, ctx: AgentContext, chunk_ids: List[str]) -> List[Citation]:
         chunks = self.storage.get_chunks(chunk_ids)

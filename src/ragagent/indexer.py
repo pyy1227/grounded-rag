@@ -91,6 +91,9 @@ class Indexer:
         total_children = 0
         kind_counts: dict = {}
 
+        if not files:
+            raise ValueError(f"没有可入库的文件: {target}（支持 {sorted(SUPPORTED_SUFFIXES)}）")
+
         for file_path in files:
             try:
                 status, children, stats = self._ingest_file(file_path, root_path, force)
@@ -109,7 +112,10 @@ class Indexer:
 
         report.elapsed_ms = int((time.perf_counter() - started) * 1000)
         report.stats = {
-            "documents": len(files),
+            # documents 只数**成功处理**的文档（added/updated/skipped），失败的不算
+            "documents": len(report.added) + len(report.updated) + len(report.skipped),
+            "attempted": len(files),
+            "errors": len(report.errors),
             "children": total_children,
             "kinds": kind_counts,
             "embedder": self.embedder.model,
